@@ -1,0 +1,40 @@
+# Ransomware Forensics Toolkit — Python Dependencies
+
+# Core AI
+anthropic>=0.40.0
+
+# Terminal UI
+rich>=13.7.0
+textual>=0.47.0
+click>=8.1.7
+
+# Forensic analysis
+python-evtx>=0.7.4          # Windows Event Log parsing
+python-registry>=1.4.0       # Windows Registry parsing
+yara-python>=4.3.1           # YARA rule matching
+pefile>=2023.2.7             # PE file analysis
+entropy>=0.1.5               # File entropy calculation
+
+# Data processing
+sqlite3-api>=2.0.1           # SQLite (standard library wrapper)
+pydantic>=2.5.0              # Data validation
+python-dateutil>=2.8.2       # Date parsing
+
+# Networking / IOC
+ipaddress                    # IP address validation (stdlib)
+dnspython>=2.4.2             # DNS lookups for IOC enrichment
+
+# Cryptography detection
+pycryptodome>=3.19.0         # Crypto algorithm identification
+
+# File hashing / imaging
+xxhash>=3.4.1                # Fast hashing
+tqdm>=4.66.1                 # Progress bars
+
+# Reporting
+jinja2>=3.1.2                # Report templating
+reportlab>=4.0.8             # PDF report generation
+
+# Utilities
+psutil>=5.9.6                # System/disk info
+pyudev>=0.24.1               # USB device detection (Linux)

@@ -1,0 +1,66 @@
+# RFT Required System Packages
+# Install with: sudo apt-get install $(cat packages.list | grep -v '^#' | tr '\n' ' ')
+
+# ─── Forensic Core ────────────────────────────────────────────────────────────
+sleuthkit           # The Sleuth Kit — filesystem forensics
+autopsy             # GUI for Sleuth Kit (optional, heavy)
+foremost            # File carving from raw images
+dcfldd              # Enhanced dd with hashing for forensic imaging
+ewf-tools           # E01/Expert Witness Format support (ewfacquire, ewfinfo)
+afflib-tools        # AFF forensic image format
+bulk-extractor      # IOC extraction from disk images
+
+# ─── Disk & Mount ─────────────────────────────────────────────────────────────
+kpartx              # Map partition tables of disk images
+util-linux          # mount, umount, blockdev, lsblk, blkid
+cryptsetup          # Encrypted partition support (BitLocker via dislocker)
+ntfs-3g             # NTFS filesystem support (required for Windows drives)
+hfsplus             # HFS+ support for Mac drives
+exfatprogs          # exFAT filesystem support
+udftools            # UDF filesystem support
+dosfstools          # FAT/FAT32 support
+
+# ─── Write Blocking ───────────────────────────────────────────────────────────
+# Note: Hardware write blockers are strongly preferred.
+# These tools provide software write blocking as a fallback.
+hdparm              # Hard drive parameter configuration
+
+# ─── Analysis Tools ───────────────────────────────────────────────────────────
+binwalk             # Firmware analysis and file extraction
+hexdump             # Hex dump utility
+xxd                 # Hex dump / reverse hex dump
+strings             # Extract printable strings from binaries
+file                # File type identification
+yara                # YARA pattern matching
+libyara-dev         # YARA development libraries
+
+# ─── Networking / IOC Enrichment ─────────────────────────────────────────────
+whois               # WHOIS lookups for IP attribution
+nmap                # Network discovery (for network forensics)
+tcpdump             # Packet capture analysis
+tshark              # Wireshark CLI for PCAP analysis
+dnsutils            # DNS lookup tools
+
+# ─── Python & Libraries ──────────────────────────────────────────────────────
+python3             # Python 3.10+
+python3-pip         # Python package installer
+python3-venv        # Virtual environment support
+python3-dev         # Python development headers
+libssl-dev          # SSL development libraries
+libffi-dev          # FFI development libraries
+
+# ─── Utilities ────────────────────────────────────────────────────────────────
+git                 # Version control
+curl                # HTTP client
+wget                # File downloader
+jq                  # JSON processor
+tmux                # Terminal multiplexer (useful for Pi sessions)
+vim                 # Text editor
+less                # Pager
+tree                # Directory listing
+usbutils            # USB device utilities (lsusb)
+
+# ─── Optional: Heavy tools ────────────────────────────────────────────────────
+# volatility3       # Memory forensics (install separately via pip)
+# plaso             # Timeline analysis (install separately)
+# log2timeline      # Log timeline tools
