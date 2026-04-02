@@ -183,9 +183,16 @@ print_flash_instructions() {
     echo "    zcat ${img_gz} | sudo dd of=/dev/sdX bs=4M status=progress"
     echo ""
     echo "  First boot:"
-    echo "    - Connect via HDMI and USB keyboard, OR"
+    echo "    - Connect a monitor+keyboard to see the GUI auto-launch, OR"
+    echo "    - Open http://rft-forensics.local:5000 from any device on the same network"
     echo "    - SSH: ssh rft@rft-forensics.local (password: forensics2024)"
-    echo "    - Run: sudo rft analyze"
+    echo ""
+    echo "  GUI Features:"
+    echo "    - Plug in the infected drive → click 'Analyze Drive'"
+    echo "    - Real-time analysis log with progress bar"
+    echo "    - Full report viewer with IOCs, timeline, MITRE ATT&CK"
+    echo "    - Download PDF/JSON/TXT FBI IC3 reports"
+    echo "    - Set your Anthropic API key in the Settings tab"
     echo ""
     echo "  SECURITY NOTE: Change the default password on first boot!"
     echo "    passwd rft"
@@ -301,8 +308,20 @@ DEBIAN_FRONTEND=noninteractive apt-get install -y \
     systemd-sysv \
     --no-install-recommends
 
+# Install GUI components (Chromium + minimal X server for kiosk mode)
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    chromium \
+    xorg xinit openbox \
+    xserver-xorg-video-fbdev \
+    x11-xserver-utils \
+    --no-install-recommends || \
+DEBIAN_FRONTEND=noninteractive apt-get install -y \
+    chromium-browser \
+    xorg xinit openbox \
+    --no-install-recommends || true
+
 # Create RFT user
-useradd -m -s /bin/bash -G sudo,disk rft
+useradd -m -s /bin/bash -G sudo,disk,video,input rft
 echo "rft:forensics2024" | chpasswd
 echo "rft ALL=(ALL) NOPASSWD: ALL" >> /etc/sudoers.d/rft-sudo
 
@@ -320,36 +339,100 @@ exec python3 -m rft.cli "$@"
 WRAPPER
 chmod +x /usr/local/bin/rft
 
+# Create rft-gui command wrapper
+cat > /usr/local/bin/rft-gui << 'WRAPPER'
+#!/usr/bin/env bash
+exec python3 -m rft.web.launcher "$@"
+WRAPPER
+chmod +x /usr/local/bin/rft-gui
+
+# Install systemd service for web server
+cp /rft-src/install/rft-gui.service /etc/systemd/system/
+systemctl enable rft-gui
+
+# Openbox autostart — launches Chromium in kiosk mode pointing at RFT GUI
+mkdir -p /home/rft/.config/openbox
+cat > /home/rft/.config/openbox/autostart << 'AUTOSTART'
+# Disable screen blanking
+xset s off
+xset s noblank
+xset -dpms
+
+# Start RFT web server in background
+sudo rft-gui &
+RFT_PID=$!
+
+# Wait for web server to be ready
+sleep 4
+
+# Launch Chromium in kiosk mode
+chromium-browser --kiosk \
+    --no-sandbox \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-restore-session-state \
+    --disable-features=TranslateUI \
+    --noerrdialogs \
+    http://127.0.0.1:5000 &
+AUTOSTART
+chown -R rft:rft /home/rft/.config
+
+# Configure autologin to X session as rft user
+cat > /etc/systemd/system/rft-autologin.service << 'AUTOLOGIN'
+[Unit]
+Description=RFT Autologin to GUI
+After=systemd-user-sessions.service plymouth-quit-wait.service
+
+[Service]
+ExecStart=/bin/bash -c "startx /usr/bin/openbox-session -- :0 vt1"
+User=rft
+PAMName=login
+TTYPath=/dev/tty1
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+AUTOLOGIN
+systemctl enable rft-autologin
+
 # Configure SSH
 systemctl enable ssh
 
-# Auto-mount USB drives (read-only by default)
+# Auto-detect USB drives and refresh RFT drive list
 cat > /etc/udev/rules.d/99-rft-usb.rules << 'UDEV'
-# Auto-detect USB storage devices and alert RFT
-ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", RUN+="/usr/local/bin/rft-usb-alert %k"
+ACTION=="add", SUBSYSTEM=="block", ENV{ID_BUS}=="usb", ENV{ID_TYPE}=="disk", \
+    RUN+="/usr/local/bin/rft-usb-alert %k"
 UDEV
 
 cat > /usr/local/bin/rft-usb-alert << 'ALERT'
 #!/usr/bin/env bash
-echo "[RFT] USB storage device detected: /dev/$1"
-echo "[RFT] Run 'sudo rft analyze --device /dev/$1' to analyze"
+DEV="/dev/$1"
+logger -t rft "[RFT] USB drive detected: $DEV"
+# Trigger browser page refresh by writing a flag file the GUI polls
+echo "$DEV" >> /tmp/rft-new-drives.txt
 ALERT
 chmod +x /usr/local/bin/rft-usb-alert
 
-# MOTD
+# Create output directory
+mkdir -p /opt/rft/output
+chown -R rft:rft /opt/rft/output
+
+# MOTD (shown on SSH login)
 cat > /etc/motd << 'MOTD'
 
   ╔═══════════════════════════════════════════════════════╗
   ║   Ransomware Forensics Toolkit (RFT) v1.0             ║
-  ║   Raspberry Pi Forensic Analysis Platform             ║
+  ║   Graphical Forensic Analysis Platform                ║
   ╠═══════════════════════════════════════════════════════╣
-  ║   Quick Start:                                        ║
-  ║     sudo rft analyze          — Full analysis         ║
-  ║     sudo rft identify <note>  — Quick identification  ║
-  ║     sudo rft learn            — Knowledge base stats  ║
+  ║   GUI:   Opens automatically on screen (port 5000)    ║
+  ║   SSH:   Connect any device to http://<IP>:5000       ║
   ║                                                       ║
-  ║   Set API key for AI analysis:                        ║
-  ║     export ANTHROPIC_API_KEY="your-key"               ║
+  ║   CLI fallback:                                       ║
+  ║     sudo rft analyze      — Full analysis             ║
+  ║     sudo rft-gui          — Start GUI manually        ║
+  ║                                                       ║
+  ║   Set API key in Settings tab (or export below):      ║
+  ║     export ANTHROPIC_API_KEY="sk-ant-..."             ║
   ║                                                       ║
   ║   REMINDER: Always use hardware write blockers!       ║
   ╚═══════════════════════════════════════════════════════╝

@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Knowledge Base — RFT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Knowledge Base</h1>
+  <p class="subtitle">RFT learns from every case. Pre-seeded with 15+ ransomware families.</p>
+</div>
+
+<div id="kb-stats" class="stats-grid"></div>
+
+<div class="section">
+  <h2>Known Ransomware Families</h2>
+  <div id="families-grid" class="families-grid">
+    <div class="loading-spinner"><div class="spinner"></div></div>
+  </div>
+</div>
+
+<div class="section">
+  <h2>Quick Identify</h2>
+  <p>Paste a ransom note below to identify the ransomware family instantly.</p>
+  <div class="identify-form">
+    <textarea id="note-input" class="code-textarea" rows="8" placeholder="Paste ransom note text here..."></textarea>
+    <button class="btn btn-primary" onclick="quickIdentify()">Identify</button>
+  </div>
+  <div id="identify-result" class="identify-result hidden"></div>
+</div>
+
+<script>
+async function loadKB() {
+  const kb = await fetch('/api/knowledge').then(r => r.json()).catch(() => ({}));
+
+  document.getElementById('kb-stats').innerHTML = `
+    <div class="stat-card">
+      <div class="stat-icon families"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg></div>
+      <div class="stat-body"><div class="stat-value">${kb.families || '—'}</div><div class="stat-label">Families</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon cases"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></div>
+      <div class="stat-body"><div class="stat-value">${kb.cases || '0'}</div><div class="stat-label">Cases Analyzed</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon iocs"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+      <div class="stat-body"><div class="stat-value">${kb.total_iocs || '—'}</div><div class="stat-label">IOCs Stored</div></div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-icon reports"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+      <div class="stat-body"><div class="stat-value">${kb.learned_patterns || '—'}</div><div class="stat-label">Learned Patterns</div></div>
+    </div>
+  `;
+
+  // Known families list (hardcoded display — KB API can expand this)
+  const families = [
+    {name:'LockBit', type:'RaaS', enc:'AES-256 + RSA-2048', vector:'RDP / phishing'},
+    {name:'ALPHV / BlackCat', type:'RaaS', enc:'ChaCha20 + RSA-4096', vector:'VPN exploit'},
+    {name:'Cl0p', type:'APT-linked', enc:'RC4 + RSA-1024', vector:'SQL injection / MFT'},
+    {name:'Hive', type:'RaaS', enc:'Customized stream', vector:'RDP / phishing'},
+    {name:'Conti', type:'RaaS', enc:'AES-256 + RSA-4096', vector:'TrickBot / Bazarloader'},
+    {name:'REvil / Sodinokibi', type:'RaaS', enc:'Salsa20 + RSA-2048', vector:'RDP / MSP supply chain'},
+    {name:'Ryuk', type:'Nation-linked', enc:'AES-256 + RSA-4096', vector:'Trickbot / Emotet'},
+    {name:'BlackBasta', type:'RaaS', enc:'ChaCha20 + RSA-4096', vector:'QakBot'},
+    {name:'Akira', type:'RaaS', enc:'AES-256-CBC', vector:'Cisco VPN exploit'},
+    {name:'Play', type:'RaaS', enc:'AES-RSA hybrid', vector:'ProxyNotShell / RDP'},
+    {name:'Royal', type:'Private', enc:'OpenSSL AES-256', vector:'Callback phishing'},
+    {name:'Phobos', type:'Private', enc:'AES-256 + RSA-1024', vector:'RDP brute force'},
+    {name:'Dharma', type:'Private', enc:'AES-256 + RSA-1024', vector:'RDP brute force'},
+    {name:'STOP/Djvu', type:'Private', enc:'Salsa20 + RSA-1024', vector:'Pirated software'},
+    {name:'WannaCry', type:'Nation-linked', enc:'AES-128-CBC + RSA-2048', vector:'EternalBlue (MS17-010)'},
+  ];
+
+  document.getElementById('families-grid').innerHTML = families.map(f => `
+    <div class="family-card">
+      <div class="family-name">${esc(f.name)}</div>
+      <div class="family-meta"><span class="badge badge-gray">${esc(f.type)}</span></div>
+      <div class="family-detail"><strong>Encryption:</strong> ${esc(f.enc)}</div>
+      <div class="family-detail"><strong>Entry:</strong> ${esc(f.vector)}</div>
+    </div>
+  `).join('');
+}
+
+async function quickIdentify() {
+  const text = document.getElementById('note-input').value.trim();
+  if (!text) return;
+
+  const btn = document.querySelector('.identify-form button');
+  btn.disabled = true;
+  btn.textContent = 'Analyzing...';
+
+  const result = await fetch('/api/identify', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({text})
+  }).then(r => r.json()).catch(e => ({error: e.message}));
+
+  btn.disabled = false;
+  btn.textContent = 'Identify';
+
+  const el = document.getElementById('identify-result');
+  el.classList.remove('hidden');
+
+  if (result.error) {
+    el.innerHTML = `<div class="alert alert-error">Error: ${esc(result.error)}</div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div class="identify-card">
+      <div class="identify-family">
+        <span class="label">Identified Family</span>
+        <span class="value ${result.family ? 'badge-red' : 'badge-gray'}">${esc(result.family || 'Unknown')}</span>
+        ${result.confidence ? `<span class="confidence">${Math.round(result.confidence * 100)}% confidence</span>` : ''}
+      </div>
+      ${result.iocs && Object.values(result.iocs).some(a => a.length) ? `
+        <div class="identify-iocs">
+          ${result.iocs.bitcoin.length ? `<div><strong>Bitcoin:</strong> ${result.iocs.bitcoin.map(esc).join(', ')}</div>` : ''}
+          ${result.iocs.tor.length ? `<div><strong>Tor:</strong> ${result.iocs.tor.map(esc).join(', ')}</div>` : ''}
+          ${result.iocs.emails.length ? `<div><strong>Email:</strong> ${result.iocs.emails.map(esc).join(', ')}</div>` : ''}
+        </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadKB();
+</script>
+{% endblock %}

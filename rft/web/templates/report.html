@@ -1,0 +1,227 @@
+{% extends "base.html" %}
+{% block title %}Report {{ case_id }} — RFT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Case Report</h1>
+    <p class="subtitle case-id-label">{{ case_id }}</p>
+  </div>
+  <div class="header-actions" id="download-btns" style="display:none">
+    <a href="/api/case/{{ case_id }}/download/txt" class="btn btn-ghost">Download TXT</a>
+    <a href="/api/case/{{ case_id }}/download/json" class="btn btn-ghost">Download JSON</a>
+    <a href="/api/case/{{ case_id }}/download/pdf" class="btn btn-primary">Download PDF (FBI)</a>
+  </div>
+</div>
+
+<div id="report-loading" class="empty-state">
+  <div class="spinner"></div>
+  <p>Loading report...</p>
+</div>
+
+<div id="report-body" style="display:none">
+
+  <!-- Finding Hero Cards -->
+  <div class="findings-hero" id="hero-cards"></div>
+
+  <!-- Tabbed sections -->
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+    <button class="tab-btn" onclick="showTab('iocs')">IOCs</button>
+    <button class="tab-btn" onclick="showTab('timeline')">Timeline</button>
+    <button class="tab-btn" onclick="showTab('mitre')">MITRE ATT&CK</button>
+    <button class="tab-btn" onclick="showTab('ai')">AI Analysis</button>
+  </div>
+
+  <!-- Tab: Overview -->
+  <div class="tab-panel" id="tab-overview">
+    <div class="info-grid" id="info-grid"></div>
+    <div class="ransom-notes-section" id="ransom-notes-section"></div>
+    <div class="recommendations-section" id="recommendations-section"></div>
+  </div>
+
+  <!-- Tab: IOCs -->
+  <div class="tab-panel hidden" id="tab-iocs">
+    <div class="ioc-section" id="ioc-section"></div>
+  </div>
+
+  <!-- Tab: Timeline -->
+  <div class="tab-panel hidden" id="tab-timeline">
+    <div class="timeline-section" id="timeline-section"></div>
+  </div>
+
+  <!-- Tab: MITRE ATT&CK -->
+  <div class="tab-panel hidden" id="tab-mitre">
+    <div class="mitre-section" id="mitre-section"></div>
+  </div>
+
+  <!-- Tab: AI Analysis -->
+  <div class="tab-panel hidden" id="tab-ai">
+    <div class="ai-section" id="ai-section"></div>
+  </div>
+
+</div>
+
+<script>
+const CASE_ID = '{{ case_id }}';
+
+function showTab(name) {
+  document.querySelectorAll('.tab-btn').forEach((b, i) => {
+    const tabs = ['overview','iocs','timeline','mitre','ai'];
+    b.classList.toggle('active', tabs[i] === name);
+  });
+  document.querySelectorAll('.tab-panel').forEach(p => {
+    p.classList.toggle('hidden', !p.id.endsWith(name));
+  });
+}
+
+async function loadReport() {
+  const status = await fetch(`/api/case/${CASE_ID}/status`).then(r => r.json()).catch(() => null);
+  if (!status || !status.findings) {
+    document.getElementById('report-loading').innerHTML = '<p>Report not available yet. <a href="/cases">Back to cases</a></p>';
+    return;
+  }
+
+  document.getElementById('report-loading').style.display = 'none';
+  document.getElementById('report-body').style.display = 'block';
+  document.getElementById('download-btns').style.display = 'flex';
+
+  const f = status.findings;
+
+  // Hero cards
+  document.getElementById('hero-cards').innerHTML = `
+    <div class="hero-card red">
+      <div class="hero-label">Ransomware Family</div>
+      <div class="hero-value">${esc(f.family || 'Unknown')}</div>
+    </div>
+    <div class="hero-card orange">
+      <div class="hero-label">Attack Vector</div>
+      <div class="hero-value">${esc(formatVector(f.attack_vector))}</div>
+    </div>
+    <div class="hero-card yellow">
+      <div class="hero-label">Files Encrypted</div>
+      <div class="hero-value">${(f.encrypted_count || 0).toLocaleString()}</div>
+    </div>
+    <div class="hero-card blue">
+      <div class="hero-label">Recovery</div>
+      <div class="hero-value">${esc(f.recovery_feasibility || 'Unknown')}</div>
+    </div>
+  `;
+
+  // Overview tab
+  document.getElementById('info-grid').innerHTML = `
+    <div class="info-card"><div class="info-label">Case ID</div><div class="info-value mono">${esc(CASE_ID)}</div></div>
+    <div class="info-card"><div class="info-label">Ransom Notes Found</div><div class="info-value">${(f.ransom_notes || []).length}</div></div>
+    <div class="info-card"><div class="info-label">Event Log Events</div><div class="info-value">${(f.timeline || []).length}${(f.timeline||[]).length === 30 ? '+' : ''}</div></div>
+    <div class="info-card"><div class="info-label">MITRE Techniques</div><div class="info-value">${(f.mitre_techniques || []).length}</div></div>
+  `;
+
+  // Ransom notes
+  if (f.ransom_notes && f.ransom_notes.length) {
+    document.getElementById('ransom-notes-section').innerHTML = `
+      <h3>Ransom Notes Found</h3>
+      <ul class="file-list">
+        ${f.ransom_notes.map(p => `<li><span class="mono">${esc(p)}</span></li>`).join('')}
+      </ul>
+    `;
+  }
+
+  // Recommendations
+  if (f.recommendations && f.recommendations.length) {
+    document.getElementById('recommendations-section').innerHTML = `
+      <h3>Recommendations</h3>
+      <ul class="rec-list">
+        ${f.recommendations.map(r => `<li>${esc(r)}</li>`).join('')}
+      </ul>
+    `;
+  }
+
+  // IOC tab
+  const iocs = f.iocs || {};
+  let iocHtml = '';
+  const iocTypes = [
+    ['bitcoin', 'Bitcoin Addresses'],
+    ['monero', 'Monero Addresses'],
+    ['tor', 'Tor (.onion) Addresses'],
+    ['emails', 'Contact Emails'],
+    ['ips', 'Attacker IPs'],
+  ];
+  for (const [key, label] of iocTypes) {
+    const items = iocs[key] || [];
+    if (!items.length) continue;
+    iocHtml += `<div class="ioc-group">
+      <h3>${label} <span class="badge badge-gray">${items.length}</span></h3>
+      <div class="ioc-list">
+        ${items.map(v => `<span class="ioc-value mono">${esc(v)}</span>`).join('')}
+      </div>
+    </div>`;
+  }
+  document.getElementById('ioc-section').innerHTML = iocHtml || '<p class="empty-text">No IOCs extracted.</p>';
+
+  // Timeline tab
+  const timeline = f.timeline || [];
+  if (timeline.length) {
+    document.getElementById('timeline-section').innerHTML = `
+      <div class="timeline">
+        ${timeline.map(e => `
+          <div class="timeline-event">
+            <div class="event-time mono">${formatTime(e.time)}</div>
+            <div class="event-dot"></div>
+            <div class="event-body">
+              <div class="event-desc">${esc(e.event)}</div>
+              ${e.event_id ? `<span class="badge badge-gray">Event ID: ${e.event_id}</span>` : ''}
+            </div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    document.getElementById('timeline-section').innerHTML = '<p class="empty-text">No event log data available.</p>';
+  }
+
+  // MITRE tab
+  const mitre = f.mitre_techniques || [];
+  if (mitre.length) {
+    document.getElementById('mitre-section').innerHTML = `
+      <div class="mitre-grid">
+        ${mitre.map(t => `
+          <div class="mitre-card">
+            <div class="mitre-id">${esc(t.technique_id || t)}</div>
+            <div class="mitre-name">${esc(t.technique_name || t)}</div>
+            ${t.tactic ? `<div class="mitre-tactic">${esc(t.tactic)}</div>` : ''}
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } else {
+    document.getElementById('mitre-section').innerHTML = '<p class="empty-text">No MITRE techniques mapped.</p>';
+  }
+
+  // AI tab
+  let aiHtml = '';
+  if (f.ai_summary) {
+    aiHtml += `<div class="ai-card"><h3>Summary</h3><p>${esc(f.ai_summary)}</p></div>`;
+  }
+  if (f.critical_facts && f.critical_facts.length) {
+    aiHtml += `<div class="ai-card"><h3>Critical Facts for Law Enforcement</h3><ol>
+      ${f.critical_facts.map(fact => `<li>${esc(fact)}</li>`).join('')}
+    </ol></div>`;
+  }
+  document.getElementById('ai-section').innerHTML = aiHtml || '<p class="empty-text">AI analysis not available for this case.</p>';
+}
+
+function formatVector(v) {
+  return (v || 'unknown').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function formatTime(iso) {
+  try { return new Date(iso).toLocaleString(); } catch { return iso; }
+}
+
+function esc(str) {
+  return String(str || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+loadReport();
+</script>
+{% endblock %}

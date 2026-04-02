@@ -1,0 +1,28 @@
+# systemd service — auto-starts RFT web GUI on boot
+# Place at: /etc/systemd/system/rft-gui.service
+# Enable: sudo systemctl enable rft-gui
+
+[Unit]
+Description=Ransomware Forensics Toolkit — Web GUI
+After=network.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=rft
+Group=rft
+WorkingDirectory=/opt/rft
+ExecStart=/usr/local/bin/rft-gui
+Restart=always
+RestartSec=5
+Environment="RFT_PORT=5000"
+Environment="RFT_OUTPUT=/opt/rft/output"
+
+# Security hardening
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectHome=read-only
+ReadWritePaths=/opt/rft /mnt/forensics
+
+[Install]
+WantedBy=multi-user.target

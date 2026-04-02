@@ -1,0 +1,389 @@
+{% extends "base.html" %}
+{% block title %}Analyze Drive — RFT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Analyze Drive</h1>
+  <p class="subtitle">Select a connected drive to begin forensic analysis. The drive will be write-protected automatically.</p>
+</div>
+
+<!-- Step indicator -->
+<div class="steps-indicator" id="steps-indicator">
+  <div class="step-dot active" data-step="1">
+    <span class="dot-num">1</span>
+    <span class="dot-label">Select Drive</span>
+  </div>
+  <div class="step-line"></div>
+  <div class="step-dot" data-step="2">
+    <span class="dot-num">2</span>
+    <span class="dot-label">Options</span>
+  </div>
+  <div class="step-line"></div>
+  <div class="step-dot" data-step="3">
+    <span class="dot-num">3</span>
+    <span class="dot-label">Analyzing</span>
+  </div>
+  <div class="step-line"></div>
+  <div class="step-dot" data-step="4">
+    <span class="dot-num">4</span>
+    <span class="dot-label">Results</span>
+  </div>
+</div>
+
+<!-- Step 1: Drive Selection -->
+<div class="wizard-panel" id="panel-1">
+  <div class="panel-header">
+    <h2>Connected Drives</h2>
+    <button class="btn btn-ghost btn-sm" onclick="refreshDrives()">
+      <svg viewBox="0 0 24 24"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0114.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0020.49 15"/></svg>
+      Refresh
+    </button>
+  </div>
+
+  <div id="drive-list" class="drive-list">
+    <div class="loading-spinner"><div class="spinner"></div><p>Scanning for drives...</p></div>
+  </div>
+
+  <div class="panel-footer">
+    <div class="safety-note">
+      <svg viewBox="0 0 24 24"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+      Write protection is applied automatically before any analysis begins.
+    </div>
+  </div>
+</div>
+
+<!-- Step 2: Options -->
+<div class="wizard-panel hidden" id="panel-2">
+  <h2>Analysis Options</h2>
+
+  <div class="selected-drive-info" id="selected-drive-display"></div>
+
+  <div class="options-grid">
+    <div class="option-card" id="opt-ai">
+      <div class="option-toggle">
+        <input type="checkbox" id="use_ai" checked>
+        <label for="use_ai"></label>
+      </div>
+      <div class="option-body">
+        <h3>AI Analysis (Claude Opus)</h3>
+        <p>Deep forensic analysis with MITRE ATT&CK mapping. Requires Anthropic API key.</p>
+      </div>
+    </div>
+
+    <div class="option-card" id="opt-image">
+      <div class="option-toggle">
+        <input type="checkbox" id="acquire_image">
+        <label for="acquire_image"></label>
+      </div>
+      <div class="option-body">
+        <h3>Acquire Forensic Image</h3>
+        <p>Create a bit-for-bit copy (DD format). Takes longer but preserves drive for lab analysis.</p>
+      </div>
+    </div>
+  </div>
+
+  <div class="victim-form">
+    <h3>Victim / Organization Info <span class="optional-tag">optional — for FBI report</span></h3>
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Your Name</label>
+        <input type="text" id="victim_name" placeholder="Jane Smith">
+      </div>
+      <div class="form-group">
+        <label>Organization</label>
+        <input type="text" id="victim_org" placeholder="Acme Corp">
+      </div>
+      <div class="form-group">
+        <label>Email</label>
+        <input type="email" id="victim_email" placeholder="jane@acme.com">
+      </div>
+      <div class="form-group">
+        <label>Phone</label>
+        <input type="tel" id="victim_phone" placeholder="555-123-4567">
+      </div>
+      <div class="form-group">
+        <label>City</label>
+        <input type="text" id="victim_city" placeholder="Chicago">
+      </div>
+      <div class="form-group">
+        <label>State</label>
+        <input type="text" id="victim_state" placeholder="IL">
+      </div>
+    </div>
+  </div>
+
+  <div class="panel-actions">
+    <button class="btn btn-ghost" onclick="goToStep(1)">← Back</button>
+    <button class="btn btn-primary btn-lg" onclick="startAnalysis()">
+      <svg viewBox="0 0 24 24"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+      Start Analysis
+    </button>
+  </div>
+</div>
+
+<!-- Step 3: Progress -->
+<div class="wizard-panel hidden" id="panel-3">
+  <h2>Analysis in Progress</h2>
+  <p class="subtitle">Do not remove the drive. This may take several minutes.</p>
+
+  <div class="progress-section">
+    <div class="progress-bar-container">
+      <div class="progress-bar" id="progress-bar" style="width: 0%"></div>
+    </div>
+    <div class="progress-label" id="progress-label">Starting...</div>
+  </div>
+
+  <div class="log-console" id="log-console">
+    <div class="log-header">
+      <span>Analysis Log</span>
+      <span class="log-count" id="log-count">0 entries</span>
+    </div>
+    <div class="log-entries" id="log-entries"></div>
+  </div>
+</div>
+
+<!-- Step 4: Quick Results (full report is on /report/caseId) -->
+<div class="wizard-panel hidden" id="panel-4">
+  <div class="result-header" id="result-header">
+    <div class="result-icon success">
+      <svg viewBox="0 0 24 24"><polyline points="20 6 9 17 4 12"/></svg>
+    </div>
+    <div>
+      <h2>Analysis Complete</h2>
+      <p id="result-case-id"></p>
+    </div>
+  </div>
+
+  <div class="findings-summary" id="findings-summary"></div>
+
+  <div class="panel-actions">
+    <a href="/cases" class="btn btn-ghost">All Cases</a>
+    <a href="#" class="btn btn-primary btn-lg" id="view-report-btn">
+      View Full Report →
+    </a>
+  </div>
+</div>
+
+<script>
+let selectedDevice = null;
+let currentCaseId = null;
+let sseSource = null;
+
+// ── Drive Loading ─────────────────────────────────────────────────────────────
+async function refreshDrives() {
+  document.getElementById('drive-list').innerHTML =
+    '<div class="loading-spinner"><div class="spinner"></div><p>Scanning...</p></div>';
+  const resp = await fetch('/api/drives').then(r => r.json());
+  renderDrives(resp.drives || []);
+}
+
+function renderDrives(drives) {
+  const el = document.getElementById('drive-list');
+  if (drives.length === 0) {
+    el.innerHTML = `<div class="empty-state">
+      <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/></svg>
+      <p>No USB drives detected. Connect a drive and click Refresh.</p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = drives.map(d => `
+    <div class="drive-card" onclick="selectDrive('${d.device}', '${d.model}', '${d.size}')">
+      <div class="drive-icon">
+        <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+      </div>
+      <div class="drive-details">
+        <div class="drive-name">${d.model || 'USB Drive'}</div>
+        <div class="drive-meta">${d.device} · ${d.size}</div>
+        ${d.mounted ? '<div class="drive-warning">⚠ Already mounted — will be remounted safely</div>' : ''}
+      </div>
+      <div class="drive-arrow">→</div>
+    </div>
+  `).join('');
+}
+
+function selectDrive(device, model, size) {
+  selectedDevice = { device, model, size };
+  document.getElementById('selected-drive-display').innerHTML = `
+    <div class="drive-card selected">
+      <div class="drive-icon"><svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg></div>
+      <div class="drive-details">
+        <div class="drive-name">${model || 'USB Drive'}</div>
+        <div class="drive-meta">${device} · ${size}</div>
+      </div>
+    </div>
+  `;
+  goToStep(2);
+}
+
+// ── Wizard Navigation ─────────────────────────────────────────────────────────
+function goToStep(n) {
+  document.querySelectorAll('.wizard-panel').forEach((p, i) => {
+    p.classList.toggle('hidden', i + 1 !== n);
+  });
+  document.querySelectorAll('.step-dot').forEach((d, i) => {
+    d.classList.toggle('active', i + 1 <= n);
+    d.classList.toggle('done', i + 1 < n);
+  });
+}
+
+// ── Start Analysis ─────────────────────────────────────────────────────────────
+async function startAnalysis() {
+  if (!selectedDevice) return;
+
+  // Save victim info
+  const victim = {
+    victim_name: document.getElementById('victim_name').value,
+    victim_org: document.getElementById('victim_org').value,
+    victim_email: document.getElementById('victim_email').value,
+    victim_phone: document.getElementById('victim_phone').value,
+    victim_city: document.getElementById('victim_city').value,
+    victim_state: document.getElementById('victim_state').value,
+  };
+
+  const resp = await fetch('/api/analyze/start', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({
+      device: selectedDevice.device,
+      use_ai: document.getElementById('use_ai').checked,
+      acquire_image: document.getElementById('acquire_image').checked,
+    })
+  }).then(r => r.json());
+
+  if (resp.error) {
+    alert('Error: ' + resp.error);
+    return;
+  }
+
+  currentCaseId = resp.case_id;
+
+  // Save victim info
+  if (Object.values(victim).some(v => v)) {
+    await fetch(`/api/case/${currentCaseId}/victim`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify(victim)
+    });
+  }
+
+  goToStep(3);
+  startStreaming(currentCaseId);
+}
+
+// ── Real-time Log Streaming ────────────────────────────────────────────────────
+function startStreaming(caseId) {
+  const logEl = document.getElementById('log-entries');
+  const countEl = document.getElementById('log-count');
+  let count = 0;
+
+  sseSource = new EventSource(`/api/case/${caseId}/stream`);
+  sseSource.onmessage = (e) => {
+    const data = JSON.parse(e.data);
+
+    if (data.done) {
+      sseSource.close();
+      loadResults(caseId);
+      return;
+    }
+    if (data.error) return;
+
+    count++;
+    countEl.textContent = `${count} entries`;
+
+    const levelClass = { success: 'log-success', warn: 'log-warn', error: 'log-error', ai: 'log-ai' }[data.level] || '';
+    logEl.insertAdjacentHTML('beforeend', `
+      <div class="log-entry ${levelClass}">
+        <span class="log-time">${data.time}</span>
+        <span class="log-msg">${escHtml(data.msg)}</span>
+      </div>
+    `);
+    logEl.scrollTop = logEl.scrollHeight;
+  };
+
+  // Also poll progress bar
+  const pollProgress = setInterval(async () => {
+    const status = await fetch(`/api/case/${caseId}/status`).then(r => r.json()).catch(() => null);
+    if (!status) return;
+    document.getElementById('progress-bar').style.width = `${status.progress}%`;
+    document.getElementById('progress-label').textContent = statusMsg(status.status);
+    if (status.status === 'complete' || status.status === 'error') {
+      clearInterval(pollProgress);
+    }
+  }, 1000);
+}
+
+function statusMsg(s) {
+  return {
+    mounting: 'Mounting drive with write protection...',
+    imaging: 'Acquiring forensic image...',
+    collecting: 'Scanning for artifacts...',
+    extracting_iocs: 'Extracting IOCs...',
+    analyzing_logs: 'Analyzing Windows Event Logs...',
+    synthesizing: 'Building attack chain...',
+    ai_analysis: 'Running AI analysis (Claude Opus)...',
+    reporting: 'Generating FBI report...',
+    complete: 'Analysis complete!',
+    error: 'Error during analysis',
+  }[s] || s;
+}
+
+// ── Results ───────────────────────────────────────────────────────────────────
+async function loadResults(caseId) {
+  const status = await fetch(`/api/case/${caseId}/status`).then(r => r.json());
+
+  document.getElementById('result-case-id').textContent = `Case ID: ${caseId}`;
+  document.getElementById('view-report-btn').href = `/report/${caseId}`;
+
+  const f = status.findings;
+  if (f) {
+    document.getElementById('findings-summary').innerHTML = `
+      <div class="findings-grid">
+        <div class="finding-card highlight">
+          <div class="finding-label">Ransomware Family</div>
+          <div class="finding-value large">${f.family || 'Unknown'}</div>
+        </div>
+        <div class="finding-card">
+          <div class="finding-label">Attack Vector</div>
+          <div class="finding-value">${formatVector(f.attack_vector)}</div>
+        </div>
+        <div class="finding-card">
+          <div class="finding-label">Encrypted Files</div>
+          <div class="finding-value">${(f.encrypted_count || 0).toLocaleString()}</div>
+        </div>
+        <div class="finding-card">
+          <div class="finding-label">IOCs Found</div>
+          <div class="finding-value">${countIocs(f.iocs)}</div>
+        </div>
+      </div>
+      ${f.ai_summary ? `<div class="ai-summary"><h3>AI Analysis Summary</h3><p>${escHtml(f.ai_summary)}</p></div>` : ''}
+    `;
+  }
+
+  if (status.status === 'error') {
+    document.getElementById('result-header').innerHTML = `
+      <div class="result-icon error"><svg viewBox="0 0 24 24"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></div>
+      <div><h2>Analysis Failed</h2><p>${escHtml(status.error || '')}</p></div>
+    `;
+  }
+
+  goToStep(4);
+}
+
+function formatVector(v) {
+  return (v || 'unknown').replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+}
+
+function countIocs(iocs) {
+  if (!iocs) return '0';
+  return Object.values(iocs).reduce((sum, arr) => sum + (arr || []).length, 0);
+}
+
+function escHtml(str) {
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ── Init ──────────────────────────────────────────────────────────────────────
+refreshDrives();
+</script>
+{% endblock %}

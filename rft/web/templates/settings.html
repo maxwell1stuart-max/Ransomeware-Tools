@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Settings — RFT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Settings</h1>
+  <p class="subtitle">Configure your API key and preferences.</p>
+</div>
+
+<div class="settings-container">
+
+  <!-- API Key -->
+  <div class="settings-card">
+    <h2>AI Analysis (Claude API)</h2>
+    <p>Enter your Anthropic API key to enable AI-powered analysis. The key is stored locally on this device only.</p>
+    <div class="form-group">
+      <label>Anthropic API Key</label>
+      <div class="api-key-input-wrap">
+        <input type="password" id="api-key-input" placeholder="sk-ant-..." autocomplete="off">
+        <button class="btn btn-ghost btn-sm" onclick="toggleKeyVisibility()">Show</button>
+      </div>
+      <p class="hint" id="api-key-status"></p>
+    </div>
+    <div class="form-group">
+      <label>AI Model</label>
+      <select id="ai-model">
+        <option value="claude-opus-4-6">Claude Opus 4.6 (recommended — most capable)</option>
+        <option value="claude-sonnet-4-6">Claude Sonnet 4.6 (faster)</option>
+        <option value="claude-haiku-4-5-20251001">Claude Haiku 4.5 (fastest)</option>
+      </select>
+    </div>
+    <button class="btn btn-primary" onclick="saveAPISettings()">Save API Settings</button>
+    <div id="api-save-msg" class="save-msg hidden"></div>
+  </div>
+
+  <!-- Display -->
+  <div class="settings-card">
+    <h2>Display</h2>
+    <div class="form-group">
+      <label>Theme</label>
+      <select id="theme-select" onchange="applyTheme(this.value)">
+        <option value="dark">Dark (default)</option>
+        <option value="light">Light</option>
+      </select>
+    </div>
+  </div>
+
+  <!-- About -->
+  <div class="settings-card">
+    <h2>About RFT</h2>
+    <div class="about-grid">
+      <div><strong>Version</strong><span>1.0.0</span></div>
+      <div><strong>Platform</strong><span id="platform-info">—</span></div>
+      <div><strong>Python</strong><span id="python-info">—</span></div>
+    </div>
+    <div class="mt-4">
+      <h3>Report to Law Enforcement</h3>
+      <ul class="link-list">
+        <li>FBI IC3: <a href="#" onclick="return false">ic3.gov (file at: https://www.ic3.gov)</a></li>
+        <li>CISA: report@cisa.gov</li>
+        <li>Your state cyber crime unit</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+<script>
+async function loadSettings() {
+  const s = await fetch('/api/settings').then(r => r.json()).catch(() => ({}));
+
+  if (s.api_key_set) {
+    document.getElementById('api-key-status').textContent = 'API key is set.';
+    document.getElementById('api-key-status').className = 'hint text-green';
+  }
+
+  if (s.ai_model) {
+    document.getElementById('ai-model').value = s.ai_model;
+  }
+
+  // Platform info
+  document.getElementById('platform-info').textContent = navigator.platform;
+}
+
+async function saveAPISettings() {
+  const apiKey = document.getElementById('api-key-input').value.trim();
+  const aiModel = document.getElementById('ai-model').value;
+
+  const body = { ai_model: aiModel };
+  if (apiKey) body.api_key = apiKey;
+
+  const resp = await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(body)
+  }).then(r => r.json());
+
+  const msg = document.getElementById('api-save-msg');
+  msg.classList.remove('hidden');
+  if (resp.ok) {
+    msg.textContent = 'Settings saved!';
+    msg.className = 'save-msg text-green';
+    document.getElementById('api-key-input').value = '';
+    document.getElementById('api-key-status').textContent = 'API key is set.';
+    document.getElementById('api-key-status').className = 'hint text-green';
+  } else {
+    msg.textContent = 'Error saving settings.';
+    msg.className = 'save-msg text-red';
+  }
+}
+
+function toggleKeyVisibility() {
+  const inp = document.getElementById('api-key-input');
+  const btn = inp.nextElementSibling;
+  if (inp.type === 'password') {
+    inp.type = 'text';
+    btn.textContent = 'Hide';
+  } else {
+    inp.type = 'password';
+    btn.textContent = 'Show';
+  }
+}
+
+function applyTheme(t) {
+  document.body.className = t === 'light' ? 'light-theme' : 'dark-theme';
+}
+
+loadSettings();
+</script>
+{% endblock %}

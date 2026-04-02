@@ -1,0 +1,149 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — RFT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Ransomware Forensics Toolkit</h1>
+  <p class="subtitle">Connect an infected drive to get started. RFT analyzes evidence safely without modifying anything.</p>
+</div>
+
+<!-- Quick Action Card -->
+<div class="quick-action-banner">
+  <div class="banner-icon">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+  </div>
+  <div class="banner-text">
+    <h2>Ready to analyze</h2>
+    <p>Connect the infected drive via USB, then click Analyze Drive.</p>
+  </div>
+  <a href="/analyze" class="btn btn-primary btn-lg">
+    <svg viewBox="0 0 24 24"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+    Analyze Drive
+  </a>
+</div>
+
+<!-- Stats Row -->
+<div class="stats-grid" id="stats-grid">
+  <div class="stat-card">
+    <div class="stat-icon cases"><svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg></div>
+    <div class="stat-body">
+      <div class="stat-value" id="stat-cases">—</div>
+      <div class="stat-label">Total Cases</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon families"><svg viewBox="0 0 24 24"><path d="M2 3h6a4 4 0 014 4v14a3 3 0 00-3-3H2z"/><path d="M22 3h-6a4 4 0 00-4 4v14a3 3 0 013-3h7z"/></svg></div>
+    <div class="stat-body">
+      <div class="stat-value" id="stat-families">—</div>
+      <div class="stat-label">Ransomware Families</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon iocs"><svg viewBox="0 0 24 24"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></div>
+    <div class="stat-body">
+      <div class="stat-value" id="stat-iocs">—</div>
+      <div class="stat-label">IOCs Collected</div>
+    </div>
+  </div>
+  <div class="stat-card">
+    <div class="stat-icon reports"><svg viewBox="0 0 24 24"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/></svg></div>
+    <div class="stat-body">
+      <div class="stat-value" id="stat-reports">—</div>
+      <div class="stat-label">Reports Generated</div>
+    </div>
+  </div>
+</div>
+
+<!-- Recent Cases -->
+<div class="section">
+  <div class="section-header">
+    <h2>Recent Cases</h2>
+    <a href="/cases" class="btn btn-ghost">View all</a>
+  </div>
+  <div id="recent-cases">
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <p>No cases yet. Analyze a drive to get started.</p>
+    </div>
+  </div>
+</div>
+
+<!-- How It Works -->
+<div class="section">
+  <h2>How It Works</h2>
+  <div class="how-it-works">
+    <div class="step">
+      <div class="step-num">1</div>
+      <div class="step-body">
+        <h3>Connect the Drive</h3>
+        <p>Plug the infected drive into a USB port. RFT automatically detects it.</p>
+      </div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step">
+      <div class="step-num">2</div>
+      <div class="step-body">
+        <h3>Safe Analysis</h3>
+        <p>RFT write-protects the drive at the kernel level before touching anything. Your evidence is never modified.</p>
+      </div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step">
+      <div class="step-num">3</div>
+      <div class="step-body">
+        <h3>AI Investigation</h3>
+        <p>Claude Opus analyzes the attack chain, maps MITRE ATT&CK techniques, and identifies the ransomware family.</p>
+      </div>
+    </div>
+    <div class="step-arrow">→</div>
+    <div class="step">
+      <div class="step-num">4</div>
+      <div class="step-body">
+        <h3>FBI Report</h3>
+        <p>A complete IC3 complaint is generated in PDF, JSON, and text formats — ready to submit to law enforcement.</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+// Load dashboard stats
+async function loadStats() {
+  const [casesResp, kbResp] = await Promise.all([
+    fetch('/api/cases').then(r => r.json()).catch(() => ({cases: []})),
+    fetch('/api/knowledge').then(r => r.json()).catch(() => ({}))
+  ]);
+
+  const cases = casesResp.cases || [];
+  document.getElementById('stat-cases').textContent = cases.length;
+  document.getElementById('stat-families').textContent = kbResp.families || '15+';
+  document.getElementById('stat-iocs').textContent = kbResp.total_iocs || '—';
+  document.getElementById('stat-reports').textContent = cases.filter(c => c.status === 'complete').length;
+
+  // Recent cases
+  const container = document.getElementById('recent-cases');
+  if (cases.length === 0) return;
+
+  const recent = cases.slice(0, 5);
+  container.innerHTML = `<div class="case-list">` + recent.map(c => `
+    <a href="/report/${c.case_id}" class="case-row">
+      <div class="case-id">${c.case_id}</div>
+      <div class="case-family badge badge-${c.family === 'Unknown' ? 'gray' : 'red'}">${c.family}</div>
+      <div class="case-device">${c.device || '—'}</div>
+      <div class="case-status badge badge-${statusColor(c.status)}">${c.status}</div>
+      <div class="case-date">${formatDate(c.started_at)}</div>
+    </a>
+  `).join('') + `</div>`;
+}
+
+function statusColor(s) {
+  return {complete:'green', error:'red', analyzing:'yellow', mounting:'yellow'}[s] || 'gray';
+}
+function formatDate(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString();
+}
+
+loadStats();
+</script>
+{% endblock %}

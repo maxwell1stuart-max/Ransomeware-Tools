@@ -169,7 +169,7 @@ install_python_packages() {
 }
 
 create_wrapper_script() {
-    log_section "Creating rft command"
+    log_section "Creating rft and rft-gui commands"
 
     cat > /usr/local/bin/rft << 'WRAPPER'
 #!/usr/bin/env bash
@@ -181,8 +181,20 @@ fi
 exec python3 -m rft.cli "$@"
 WRAPPER
 
+    cat > /usr/local/bin/rft-gui << 'WRAPPER'
+#!/usr/bin/env bash
+# RFT GUI launcher — starts the web interface and opens a browser
+VENV_DIR="/opt/rft/venv"
+if [[ -f "${VENV_DIR}/bin/activate" ]]; then
+    source "${VENV_DIR}/bin/activate"
+fi
+exec python3 -m rft.web.launcher "$@"
+WRAPPER
+
     chmod +x /usr/local/bin/rft
+    chmod +x /usr/local/bin/rft-gui
     log_ok "Created /usr/local/bin/rft"
+    log_ok "Created /usr/local/bin/rft-gui"
 
     # Also create bash completion
     cat > /etc/bash_completion.d/rft << 'COMPLETION'
@@ -277,17 +289,19 @@ print_completion() {
     echo "║   RFT Installation Complete                               ║"
     echo "╠═══════════════════════════════════════════════════════════╣"
     echo "║                                                           ║"
-    echo "║   Quick Start:                                            ║"
+    echo "║   GUI Quick Start (Graphical Interface):                   ║"
+    echo "║     sudo rft-gui                  — Open browser GUI      ║"
+    echo "║     sudo rft-gui --kiosk          — Fullscreen kiosk mode ║"
+    echo "║                                                           ║"
+    echo "║   CLI Quick Start:                                        ║"
     echo "║     sudo rft analyze              — Full analysis         ║"
     echo "║     sudo rft identify <note.txt>  — Quick ID              ║"
-    echo "║     sudo rft learn                — Knowledge base stats  ║"
     echo "║                                                           ║"
-    echo "║   AI Analysis (requires Anthropic API key):               ║"
+    echo "║   AI Analysis (set your API key in GUI Settings, or:)     ║"
     echo "║     export ANTHROPIC_API_KEY=\"sk-ant-...\"                 ║"
-    echo "║     sudo rft analyze                                      ║"
     echo "║                                                           ║"
-    echo "║   Connect infected drive via USB, then:                   ║"
-    echo "║     sudo rft analyze                                      ║"
+    echo "║   Connect infected drive via USB, then open rft-gui       ║"
+    echo "║   and click Analyze Drive.                                ║"
     echo "║                                                           ║"
     echo "║   IMPORTANT: Always use a hardware write blocker!         ║"
     echo "║   Software write-blocking is a fallback only.             ║"

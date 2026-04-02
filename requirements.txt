@@ -38,3 +38,9 @@ reportlab>=4.0.8             # PDF report generation
 # Utilities
 psutil>=5.9.6                # System/disk info
 pyudev>=0.24.1               # USB device detection (Linux)
+
+# Web GUI
+flask>=3.0.0                 # Web application server
+flask-cors>=4.0.0            # CORS for local network access
+waitress>=3.0.0              # Production WSGI server (Windows-safe)
+gunicorn>=21.2.0             # Production WSGI server (Linux)

@@ -1,0 +1,36 @@
+# systemd service — opens Chromium in kiosk mode pointing at RFT GUI
+# Runs after rft-gui.service starts the web server
+# Place at: /etc/systemd/system/rft-kiosk.service
+# Enable: sudo systemctl enable rft-kiosk
+
+[Unit]
+Description=RFT — Chromium Kiosk Browser
+After=graphical.target rft-gui.service
+Requires=rft-gui.service
+
+[Service]
+Type=simple
+User=rft
+Group=rft
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/rft/.Xauthority
+
+# Wait a moment for the web server to be ready, then launch Chromium
+ExecStartPre=/bin/sleep 3
+ExecStart=/usr/bin/chromium-browser \
+    --kiosk \
+    --no-sandbox \
+    --disable-infobars \
+    --disable-session-crashed-bubble \
+    --disable-restore-session-state \
+    --disable-features=TranslateUI \
+    --noerrdialogs \
+    --disable-pinch \
+    --overscroll-history-navigation=0 \
+    http://127.0.0.1:5000
+
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

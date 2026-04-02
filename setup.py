@@ -36,12 +36,16 @@ setup(
     entry_points={
         "console_scripts": [
             "rft=rft.cli:main",
+            "rft-gui=rft.web.launcher:main",
         ],
     },
     package_data={
         "rft": [
             "knowledge_base/db_schema.sql",
             "reporting/templates/*.json",
+            "web/templates/*.html",
+            "web/static/css/*.css",
+            "web/static/js/*.js",
         ],
     },
     classifiers=[
