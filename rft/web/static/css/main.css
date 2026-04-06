@@ -607,6 +607,21 @@ a:hover { text-decoration: underline; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+/* ── Active Case Banner ───────────────────────────────────── */
+.active-case-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: rgba(49,130,206,0.1);
+  border: 1px solid rgba(49,130,206,0.3);
+  border-radius: 10px;
+  padding: 12px 16px;
+  margin-bottom: 20px;
+  font-size: 0.9rem;
+  color: var(--text-primary);
+}
+.active-case-banner svg { width: 18px; height: 18px; stroke: var(--accent-blue); fill: none; stroke-width: 2; flex-shrink: 0; }
+
 /* ── Investigation Tab ────────────────────────────────────── */
 .inv-section { margin-bottom: 28px; }
 .inv-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }

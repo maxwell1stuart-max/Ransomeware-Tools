@@ -257,6 +257,7 @@ async function startAnalysis() {
   }
 
   currentCaseId = resp.case_id;
+  localStorage.setItem('rft_active_case', currentCaseId);
 
   // Save victim info
   if (Object.values(victim).some(v => v)) {
@@ -386,7 +387,77 @@ function escAttr(str) {
   return String(str || '').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-refreshDrives();
+// ── Init — reconnect to any running analysis on page load ─────────────────────
+async function init() {
+  const savedCase = localStorage.getItem('rft_active_case');
+  if (savedCase) {
+    const status = await fetch(`/api/case/${savedCase}/status`).then(r => r.json()).catch(() => null);
+    if (status && status.status !== 'complete' && status.status !== 'error') {
+      // Analysis is still running — jump straight back to the progress panel
+      currentCaseId = savedCase;
+      showActiveBanner(savedCase, status.status);
+      goToStep(3);
+      replayLogs(status.log);
+      startStreaming(savedCase);
+      return;
+    } else if (status && (status.status === 'complete' || status.status === 'error')) {
+      // Finished while we were away — go straight to results
+      currentCaseId = savedCase;
+      localStorage.removeItem('rft_active_case');
+      goToStep(3);
+      replayLogs(status.log);
+      loadResults(savedCase);
+      return;
+    }
+    // Case not found on server (reboot cleared it)
+    localStorage.removeItem('rft_active_case');
+  }
+  refreshDrives();
+}
+
+function showActiveBanner(caseId, status) {
+  const header = document.querySelector('.page-header');
+  if (!header) return;
+  const banner = document.createElement('div');
+  banner.className = 'active-case-banner';
+  banner.innerHTML = `
+    <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+    Analysis in progress: <strong>${caseId}</strong> — ${statusMsg(status)}
+    <a href="/report/${caseId}" class="btn btn-ghost btn-sm" style="margin-left:auto">View Report</a>
+  `;
+  header.after(banner);
+}
+
+function replayLogs(logs) {
+  // Replay all logs received before we navigated away
+  const logEl = document.getElementById('log-entries');
+  const countEl = document.getElementById('log-count');
+  if (!logs || !logEl) return;
+  logs.forEach(data => {
+    const levelClass = {success:'log-success', warn:'log-warn', error:'log-error', ai:'log-ai'}[data.level] || '';
+    logEl.insertAdjacentHTML('beforeend', `
+      <div class="log-entry ${levelClass}">
+        <span class="log-time">${data.time}</span>
+        <span class="log-msg">${escHtml(data.msg)}</span>
+      </div>
+    `);
+  });
+  document.getElementById('log-count').textContent = `${logs.length} entries`;
+  logEl.scrollTop = logEl.scrollHeight;
+  // Restore progress bar
+  fetch(`/api/case/${currentCaseId}/status`).then(r => r.json()).then(s => {
+    document.getElementById('progress-bar').style.width = `${s.progress}%`;
+    document.getElementById('progress-label').textContent = statusMsg(s.status);
+  });
+}
+
+// Clear saved case when analysis completes
+const _origLoadResults = loadResults;
+loadResults = async function(caseId) {
+  localStorage.removeItem('rft_active_case');
+  return _origLoadResults(caseId);
+};
+
+init();
 </script>
 {% endblock %}
