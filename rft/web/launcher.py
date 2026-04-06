@@ -49,6 +49,10 @@ def open_browser(url: str, kiosk: bool = False):
     """Open the GUI in a browser window."""
     time.sleep(2)  # Give Flask time to start
 
+    # Skip if no display is available (headless server, SSH session)
+    if not os.environ.get("DISPLAY") and not kiosk:
+        return
+
     is_pi = platform.machine().startswith("arm") or platform.machine().startswith("aarch")
     is_linux = sys.platform == "linux"
 
