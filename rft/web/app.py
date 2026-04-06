@@ -204,9 +204,8 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         case["status"] = "collecting"
         case["progress"] = 35
 
-        from rft.forensics.artifact_collector import ArtifactCollector
-        collector = ArtifactCollector(mounted.mount_point)
-        collection = collector.collect()
+        from rft.forensics.artifact_collector import collect_artifacts
+        collection = collect_artifacts(mounted.mount_point)
 
         log(f"Found {len(collection.ransom_notes)} ransom note(s)", "success" if collection.ransom_notes else "warn")
         log(f"Found {len(collection.encrypted_files)} encrypted file(s)")
@@ -217,10 +216,9 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         log("Extracting IOCs (wallets, IPs, Tor addresses)...")
         case["status"] = "extracting_iocs"
 
-        from rft.analysis.ioc_extractor import IOCExtractor
-        extractor = IOCExtractor()
+        from rft.analysis.ioc_extractor import extract_iocs
         note_texts = [Path(n).read_text(errors="replace") for n in collection.ransom_notes[:5]]
-        ioc_report = extractor.extract_iocs(note_texts)
+        ioc_report = extract_iocs(note_texts)
 
         family = ioc_report.identified_family
         log(f"Family identified: {family or 'Unknown'}", "success" if family else "warn")
@@ -233,9 +231,8 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         if collection.event_logs:
             log("Analyzing Windows Event Logs...")
             case["status"] = "analyzing_logs"
-            from rft.analysis.log_analyzer import LogAnalyzer
-            analyzer = LogAnalyzer()
-            log_analysis = analyzer.analyze_event_logs(collection.event_logs)
+            from rft.analysis.log_analyzer import analyze_event_logs
+            log_analysis = analyze_event_logs(collection.event_logs)
             log(f"Attack timeline: {len(log_analysis.timeline)} events")
             log(f"Failed logons: {log_analysis.failed_logon_count}")
         case["progress"] = 70
@@ -450,9 +447,8 @@ def quick_identify():
     if not text:
         return jsonify({"error": "No text provided"}), 400
     try:
-        from rft.analysis.ioc_extractor import IOCExtractor
-        extractor = IOCExtractor()
-        ioc_report = extractor.extract_iocs([text])
+        from rft.analysis.ioc_extractor import extract_iocs
+        ioc_report = extract_iocs([text])
         family = ioc_report.identified_family
         return jsonify({
             "family": family,
