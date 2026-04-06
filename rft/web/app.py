@@ -219,7 +219,10 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         case["status"] = "extracting_iocs"
 
         from rft.analysis.ioc_extractor import extract_iocs
-        note_texts = [Path(n).read_text(errors="replace") for n in collection.ransom_notes[:5]]
+        note_texts = [
+            Path(n.absolute_path).read_text(errors="replace")
+            for n in collection.ransom_notes[:5]
+        ]
         ioc_report = extract_iocs(note_texts)
 
         family = ioc_report.identified_family
@@ -234,7 +237,8 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
             log("Analyzing Windows Event Logs...")
             case["status"] = "analyzing_logs"
             from rft.analysis.log_analyzer import analyze_event_logs
-            log_analysis = analyze_event_logs(collection.event_logs)
+            evtx_paths = [a.absolute_path for a in collection.event_logs]
+            log_analysis = analyze_event_logs(evtx_paths)
             log(f"Attack timeline: {len(log_analysis.timeline)} events")
             log(f"Failed logons: {log_analysis.failed_logon_count}")
         case["progress"] = 70
@@ -289,25 +293,29 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         # Build findings summary for the UI
         case["findings"] = {
             "family": analysis.ransomware_family or "Unknown",
-            "attack_vector": analysis.attack_vector,
-            "encrypted_count": analysis.encrypted_file_count,
-            "ransom_notes": [str(p) for p in collection.ransom_notes],
+            "attack_vector": analysis.attack_vector.primary_vector if analysis.attack_vector else "unknown",
+            "encrypted_count": analysis.estimated_files_encrypted,
+            "ransom_notes": [a.absolute_path for a in collection.ransom_notes],
             "iocs": {
-                "bitcoin": ioc_report.bitcoin_addresses,
-                "monero": ioc_report.monero_addresses,
-                "tor": ioc_report.tor_addresses,
-                "emails": ioc_report.email_addresses,
-                "ips": ioc_report.ip_addresses[:20],
+                "bitcoin": [i.value for i in ioc_report.bitcoin_addresses],
+                "monero": [i.value for i in ioc_report.monero_addresses],
+                "tor": [i.value for i in ioc_report.onion_addresses],
+                "emails": [i.value for i in ioc_report.email_addresses],
+                "ips": [i.value for i in ioc_report.ip_addresses[:20]],
             },
-            "mitre_techniques": analysis.mitre_techniques,
+            "mitre_techniques": [],
             "timeline": [
-                {"time": e.timestamp.isoformat(), "event": e.description, "event_id": e.event_id}
+                {
+                    "time": e.timestamp.isoformat() if hasattr(e.timestamp, 'isoformat') else str(e.timestamp),
+                    "event": e.description,
+                    "event_id": getattr(e, 'event_id', None),
+                }
                 for e in (log_analysis.timeline[:30] if log_analysis else [])
             ],
             "ai_summary": ai_result.summary if ai_result else None,
             "critical_facts": ai_result.critical_facts if ai_result else [],
-            "recovery_feasibility": analysis.recovery_feasibility,
-            "recommendations": analysis.recommendations,
+            "recovery_feasibility": analysis.encryption_analysis.decryption_likelihood if analysis.encryption_analysis else "Unknown",
+            "recommendations": analysis.recovery_recommendations,
             "report_txt": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.txt"),
             "report_json": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.json"),
             "report_pdf": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.pdf"),
