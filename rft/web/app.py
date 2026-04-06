@@ -73,31 +73,62 @@ def settings_page():
 
 @app.route("/api/drives")
 def list_drives():
-    """Return list of attached drives excluding the OS drive."""
+    """Return list of attached drives and their partitions, excluding the OS drive."""
     try:
-        from rft.forensics.safe_mount import list_available_drives
-        drives = list_available_drives()
+        result = subprocess.run(
+            ["lsblk", "-J", "-o", "NAME,SIZE,TYPE,FSTYPE,LABEL,MODEL,MOUNTPOINT,HOTPLUG"],
+            capture_output=True, text=True, timeout=5
+        )
+        data = json.loads(result.stdout)
+
+        # Find root device to exclude it
+        root_result = subprocess.run(
+            ["findmnt", "-n", "-o", "SOURCE", "/"],
+            capture_output=True, text=True
+        )
+        root_dev = root_result.stdout.strip().replace("/dev/", "")
+        # Strip partition suffix to get disk name: sda1 → sda
+        root_disk = root_dev.rstrip("0123456789")
+
+        drives = []
+        for dev in data.get("blockdevices", []):
+            if dev.get("type") != "disk":
+                continue
+            if dev["name"] == root_disk or dev["name"] in root_dev:
+                continue  # Skip OS drive
+
+            disk_device = f"/dev/{dev['name']}"
+            partitions = dev.get("children", [])
+
+            if partitions:
+                # Offer each mountable partition individually
+                for p in partitions:
+                    if p.get("type") not in ("part", "lvm"):
+                        continue
+                    drives.append({
+                        "device": f"/dev/{p['name']}",
+                        "size": p.get("size", "?"),
+                        "model": f"{dev.get('model', 'Drive')} — partition {p['name']}",
+                        "fstype": p.get("fstype") or "unknown",
+                        "label": p.get("label") or "",
+                        "mounted": bool(p.get("mountpoint")),
+                        "parent_disk": disk_device,
+                    })
+            else:
+                # No partitions — offer the raw disk
+                drives.append({
+                    "device": disk_device,
+                    "size": dev.get("size", "?"),
+                    "model": dev.get("model") or "Unknown Drive",
+                    "fstype": dev.get("fstype") or "unknown",
+                    "label": dev.get("label") or "",
+                    "mounted": bool(dev.get("mountpoint")),
+                    "parent_disk": disk_device,
+                })
+
         return jsonify({"drives": drives, "error": None})
     except Exception as e:
-        # Fallback: parse lsblk directly
-        try:
-            result = subprocess.run(
-                ["lsblk", "-J", "-o", "NAME,SIZE,TYPE,MODEL,MOUNTPOINT,HOTPLUG"],
-                capture_output=True, text=True, timeout=5
-            )
-            data = json.loads(result.stdout)
-            drives = []
-            for dev in data.get("blockdevices", []):
-                if dev.get("type") == "disk" and dev.get("hotplug") == "1":
-                    drives.append({
-                        "device": f"/dev/{dev['name']}",
-                        "size": dev.get("size", "?"),
-                        "model": dev.get("model", "Unknown USB Drive"),
-                        "mounted": bool(dev.get("mountpoint")),
-                    })
-            return jsonify({"drives": drives, "error": None})
-        except Exception as e2:
-            return jsonify({"drives": [], "error": str(e2)})
+        return jsonify({"drives": [], "error": str(e)})
 
 
 # ─── API: Start Analysis ───────────────────────────────────────────────────────
@@ -149,7 +180,7 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         from rft.forensics.safe_mount import mount_drive_readonly
         mounted = mount_drive_readonly(device, "/mnt/forensics", case_id)
         if not mounted:
-            raise RuntimeError(f"Failed to mount {device} safely")
+            raise RuntimeError(f"Failed to mount {device} — unknown error")
 
         log(f"Drive mounted at {mounted.mount_point}", "success")
         log(f"SHA-256: {mounted.hash_before[:16]}...", "info")

@@ -188,14 +188,14 @@ function renderDrives(drives) {
   }
 
   el.innerHTML = drives.map(d => `
-    <div class="drive-card" onclick="selectDrive('${d.device}', '${d.model}', '${d.size}')">
+    <div class="drive-card" onclick="selectDrive('${d.device}', '${escAttr(d.model)}', '${d.size}')">
       <div class="drive-icon">
         <svg viewBox="0 0 24 24"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
       </div>
       <div class="drive-details">
-        <div class="drive-name">${d.model || 'USB Drive'}</div>
-        <div class="drive-meta">${d.device} · ${d.size}</div>
-        ${d.mounted ? '<div class="drive-warning">⚠ Already mounted — will be remounted safely</div>' : ''}
+        <div class="drive-name">${d.model || 'USB Drive'}${d.label ? ` — ${d.label}` : ''}</div>
+        <div class="drive-meta">${d.device} · ${d.size} · ${d.fstype || 'unknown fs'}</div>
+        ${d.mounted ? '<div class="drive-warning">⚠ Currently mounted — will be remounted read-only</div>' : ''}
       </div>
       <div class="drive-arrow">→</div>
     </div>
@@ -381,6 +381,9 @@ function countIocs(iocs) {
 
 function escHtml(str) {
   return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function escAttr(str) {
+  return String(str || '').replace(/'/g,'&#39;').replace(/"/g,'&quot;');
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────

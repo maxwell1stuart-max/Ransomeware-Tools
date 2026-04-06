@@ -145,12 +145,15 @@ def mount_drive_readonly(
     # Validate device exists
     if not Path(device).exists():
         logger.error(f"Device {device} does not exist")
-        return None
+        raise RuntimeError(f"Device {device} does not exist")
 
-    # Apply write protection BEFORE mounting
-    if not _set_write_protection(device, protect=True):
-        logger.error(f"Failed to write-protect {device}")
-        return None
+    # Ensure mount base directory exists
+    Path(mount_base).mkdir(parents=True, exist_ok=True)
+
+    # Apply write protection BEFORE mounting (non-fatal — some drives reject blockdev)
+    wp_ok = _set_write_protection(device, protect=True)
+    if not wp_ok:
+        logger.warning(f"blockdev --setro failed for {device} — continuing with mount -o ro only")
 
     # Create unique mount point
     timestamp = int(time.time())
@@ -158,25 +161,48 @@ def mount_drive_readonly(
     mount_point = Path(mount_base) / case_id / f"{dev_name}_{timestamp}"
     mount_point.mkdir(parents=True, exist_ok=True)
 
-    # Detect filesystem type
+    # If device is a whole disk (no partition table FS), try first partition
     fstype = _detect_filesystem(device)
+    mount_device = device
 
-    # Build mount command with read-only, no-access-time, no-execute flags
-    mount_cmd = ["mount", "-o", "ro,noatime,noexec,nosuid", device, str(mount_point)]
-    if fstype:
-        mount_cmd = ["mount", "-t", fstype, "-o", "ro,noatime,noexec,nosuid",
-                     device, str(mount_point)]
+    # If no fstype found on the raw disk, check if it has partitions and use the first one
+    if not fstype:
+        children = _get_partitions(device)
+        if children:
+            mount_device = children[0]
+            fstype = _detect_filesystem(mount_device)
+            logger.info(f"{device} has no direct filesystem — trying first partition {mount_device}")
 
-    result = subprocess.run(mount_cmd, capture_output=True, text=True)
-    if result.returncode != 0:
-        # Try without specifying fstype
-        mount_cmd = ["mount", "-o", "ro,noatime,noexec,nosuid", device, str(mount_point)]
-        result = subprocess.run(mount_cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            logger.error(f"Mount failed for {device}: {result.stderr}")
-            _set_write_protection(device, protect=False)
+    # Build mount options — include show_sys_files for NTFS
+    base_opts = "ro,noatime,noexec,nosuid"
+    if fstype in ("ntfs", "ntfs-3g"):
+        base_opts += ",windows_names"
+        fstype = "ntfs-3g"
+
+    # Try mount with detected fstype first, then auto-detect
+    errors = []
+    mounted_ok = False
+    for cmd in [
+        ["mount", "-t", fstype, "-o", base_opts, mount_device, str(mount_point)] if fstype else None,
+        ["mount", "-o", base_opts, mount_device, str(mount_point)],
+    ]:
+        if cmd is None:
+            continue
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            mounted_ok = True
+            break
+        errors.append(result.stderr.strip())
+
+    if not mounted_ok:
+        err_detail = " | ".join(errors)
+        logger.error(f"Mount failed for {mount_device}: {err_detail}")
+        _set_write_protection(device, protect=False)
+        try:
             mount_point.rmdir()
-            return None
+        except Exception:
+            pass
+        raise RuntimeError(f"Could not mount {mount_device}: {err_detail}")
 
     # Hash the device for chain of custody
     logger.info(f"Hashing {device} for chain of custody (this may take a while)...")
@@ -310,6 +336,27 @@ def _get_parent_disk(device: str) -> str:
     if result.returncode == 0 and result.stdout.strip():
         return f"/dev/{result.stdout.strip()}"
     return device
+
+
+def _get_partitions(device: str) -> list[str]:
+    """Return list of partition device paths for a disk, e.g. ['/dev/sda1', '/dev/sda2']"""
+    import json
+    result = subprocess.run(
+        ["lsblk", "-J", "-o", "NAME,TYPE", device],
+        capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        return []
+    try:
+        data = json.loads(result.stdout)
+        partitions = []
+        for dev in data.get("blockdevices", []):
+            for child in dev.get("children", []):
+                if child.get("type") == "part":
+                    partitions.append(f"/dev/{child['name']}")
+        return partitions
+    except Exception:
+        return []
 
 
 def _get_root_device() -> str:
