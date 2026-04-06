@@ -43,6 +43,14 @@ class MountedDrive:
     record: MountRecord
     _mounted: bool = field(default=False, repr=False)
 
+    @property
+    def mount_point(self) -> str:
+        return self.record.mount_point
+
+    @property
+    def hash_before(self) -> str:
+        return self.record.sha256_hash
+
     def unmount(self) -> bool:
         if not self._mounted:
             return True
