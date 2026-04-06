@@ -249,8 +249,92 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         from rft.analysis.ransomware_analyzer import analyze_ransomware_incident
         analysis = analyze_ransomware_incident(collection, log_analysis, ioc_report, case_id)
 
-        log(f"Attack vector: {analysis.attack_vector}", "success")
-        log(f"Encrypted scope: {analysis.encrypted_file_count} files")
+        log(f"Attack vector: {analysis.attack_vector.primary_vector if analysis.attack_vector else 'unknown'}", "success")
+        log(f"Encrypted scope: {analysis.estimated_files_encrypted} files")
+        case["progress"] = 75
+
+        # Step 5b: Shadow Copy Recovery
+        log("Scanning for surviving shadow copies (VSS)...")
+        case["status"] = "shadow_copies"
+        shadow_result = None
+        try:
+            from rft.forensics.shadow_copy import scan_shadow_copies
+            shadow_result = scan_shadow_copies(mounted.mount_point, str(OUTPUT_DIR / case_id))
+            if shadow_result.snapshots_found > 0:
+                log(f"Found {shadow_result.snapshots_found} VSS snapshot(s)!", "success")
+                if shadow_result.vss_deletion_failed:
+                    log("Attacker tried to delete shadow copies but FAILED — files may be recoverable!", "success")
+                if shadow_result.recovered_files:
+                    log(f"Recovered {len(shadow_result.recovered_files)} files from shadow copies", "success")
+            elif shadow_result.vss_deleted:
+                log("Attacker successfully deleted all shadow copies", "warn")
+            else:
+                log("No shadow copies found on this volume", "info")
+        except Exception as e:
+            log(f"Shadow copy scan skipped: {e}", "warn")
+
+        # Step 5c: Attack Timeline
+        log("Building attack timeline...")
+        case["status"] = "timeline"
+        timeline_result = None
+        try:
+            from rft.forensics.timeline import build_attack_timeline
+            timeline_result = build_attack_timeline(
+                mounted.mount_point,
+                str(OUTPUT_DIR / case_id),
+                log_analysis=log_analysis,
+                collection=collection,
+            )
+            if timeline_result.encryption_start_time:
+                log(f"Encryption started: {timeline_result.encryption_start_time.strftime('%Y-%m-%d %H:%M:%S UTC')}", "success")
+            if timeline_result.patient_zero_path:
+                log(f"Patient zero (first encrypted file): {Path(timeline_result.patient_zero_path).name}", "success")
+            if timeline_result.encryption_duration_minutes:
+                log(f"Encryption duration: {timeline_result.encryption_duration_minutes:.0f} minutes")
+        except Exception as e:
+            log(f"Timeline build skipped: {e}", "warn")
+
+        # Step 5d: Memory analysis
+        log("Scanning for memory dumps and hibernation files...")
+        case["status"] = "memory_analysis"
+        memory_result = None
+        try:
+            from rft.forensics.memory_analysis import analyze_memory
+            memory_result = analyze_memory(
+                mounted.mount_point,
+                str(OUTPUT_DIR / case_id),
+                ransomware_family=analysis.ransomware_family,
+            )
+            if memory_result.memory_files_found:
+                log(f"Memory files found: {len(memory_result.memory_files_found)}", "success")
+                if memory_result.potential_keys:
+                    log(f"Potential encryption key material found in memory: {len(memory_result.potential_keys)} candidates", "success")
+                if memory_result.credentials:
+                    log(f"Credentials found in memory: {len(memory_result.credentials)}", "success")
+            else:
+                log("No memory dumps found (connect a live RAM dump for key recovery)", "info")
+        except Exception as e:
+            log(f"Memory analysis skipped: {e}", "warn")
+
+        # Step 5e: Deleted file recovery
+        log("Attempting deleted file recovery from unallocated space...")
+        case["status"] = "file_recovery"
+        recovery_result = None
+        try:
+            from rft.forensics.file_recovery import attempt_file_recovery
+            recovery_result = attempt_file_recovery(
+                device,
+                str(OUTPUT_DIR / case_id),
+            )
+            if recovery_result.total_recovered > 0:
+                log(f"Recovered {recovery_result.total_recovered} deleted file(s)!", "success")
+            elif recovery_result.mft_deleted_entries:
+                log(f"Found {len(recovery_result.mft_deleted_entries)} deleted MFT entries — install ntfsundelete to recover", "warn")
+            else:
+                log("No recoverable deleted files found", "info")
+        except Exception as e:
+            log(f"File recovery skipped: {e}", "warn")
+
         case["progress"] = 80
 
         # Step 6: AI analysis
@@ -316,6 +400,34 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
             "critical_facts": ai_result.critical_facts if ai_result else [],
             "recovery_feasibility": analysis.encryption_analysis.decryption_likelihood if analysis.encryption_analysis else "Unknown",
             "recommendations": analysis.recovery_recommendations,
+            # Investigation findings
+            "shadow_copies": {
+                "found": shadow_result.snapshots_found if shadow_result else 0,
+                "recovered_files": len(shadow_result.recovered_files) if shadow_result else 0,
+                "attacker_tried_delete": shadow_result.vss_deleted if shadow_result else False,
+                "deletion_failed": shadow_result.vss_deletion_failed if shadow_result else False,
+            } if shadow_result else None,
+            "attack_timeline": {
+                "encryption_start": timeline_result.encryption_start_time.isoformat() if timeline_result and timeline_result.encryption_start_time else None,
+                "encryption_end": timeline_result.encryption_end_time.isoformat() if timeline_result and timeline_result.encryption_end_time else None,
+                "duration_minutes": timeline_result.encryption_duration_minutes if timeline_result else None,
+                "patient_zero": timeline_result.patient_zero_path if timeline_result else None,
+                "total_events": timeline_result.total_events if timeline_result else 0,
+                "phases": [{"name": p.name, "description": p.description, "events": len(p.events)} for p in (timeline_result.phases if timeline_result else [])],
+            },
+            "memory_analysis": {
+                "files_found": memory_result.memory_files_found if memory_result else [],
+                "potential_keys": len(memory_result.potential_keys) if memory_result else 0,
+                "credentials": len(memory_result.credentials) if memory_result else 0,
+                "c2_indicators": len(memory_result.c2_indicators) if memory_result else 0,
+                "notes": memory_result.notes if memory_result else [],
+            } if memory_result else None,
+            "file_recovery": {
+                "total_recovered": recovery_result.total_recovered if recovery_result else 0,
+                "tool_used": recovery_result.tool_used if recovery_result else "",
+                "mft_deleted_entries": len(recovery_result.mft_deleted_entries) if recovery_result else 0,
+                "notes": recovery_result.notes if recovery_result else [],
+            } if recovery_result else None,
             "report_txt": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.txt"),
             "report_json": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.json"),
             "report_pdf": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.pdf"),

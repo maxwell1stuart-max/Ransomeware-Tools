@@ -607,6 +607,18 @@ a:hover { text-decoration: underline; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
 ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 
+/* ── Investigation Tab ────────────────────────────────────── */
+.inv-section { margin-bottom: 28px; }
+.inv-section h3 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; color: var(--text-primary); }
+.inv-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 12px; margin-bottom: 12px; }
+.inv-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 10px; padding: 14px; }
+.inv-card.highlight { border-color: rgba(56,161,105,0.4); background: rgba(56,161,105,0.06); }
+.inv-label { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 5px; }
+.inv-value { font-weight: 600; font-size: 0.95rem; }
+.inv-note { font-size: 0.85rem; color: var(--text-secondary); background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-top: 8px; }
+.patient-zero { background: rgba(229,62,62,0.06); border: 1px solid rgba(229,62,62,0.2); border-radius: 8px; padding: 12px; margin: 10px 0; font-size: 0.88rem; }
+.phase-card { background: var(--bg-card); border: 1px solid var(--border); border-radius: 8px; padding: 10px 14px; margin-top: 8px; font-size: 0.88rem; display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+
 /* ── Light theme overrides ────────────────────────────────── */
 body.light-theme {
   --bg-base:       #f7f8fc;

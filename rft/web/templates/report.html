@@ -27,6 +27,7 @@
   <!-- Tabbed sections -->
   <div class="tab-bar">
     <button class="tab-btn active" onclick="showTab('overview')">Overview</button>
+    <button class="tab-btn" onclick="showTab('investigation')">Investigation</button>
     <button class="tab-btn" onclick="showTab('iocs')">IOCs</button>
     <button class="tab-btn" onclick="showTab('timeline')">Timeline</button>
     <button class="tab-btn" onclick="showTab('mitre')">MITRE ATT&CK</button>
@@ -38,6 +39,11 @@
     <div class="info-grid" id="info-grid"></div>
     <div class="ransom-notes-section" id="ransom-notes-section"></div>
     <div class="recommendations-section" id="recommendations-section"></div>
+  </div>
+
+  <!-- Tab: Investigation -->
+  <div class="tab-panel hidden" id="tab-investigation">
+    <div id="investigation-section"></div>
   </div>
 
   <!-- Tab: IOCs -->
@@ -67,7 +73,7 @@ const CASE_ID = '{{ case_id }}';
 
 function showTab(name) {
   document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    const tabs = ['overview','iocs','timeline','mitre','ai'];
+    const tabs = ['overview','investigation','iocs','timeline','mitre','ai'];
     b.classList.toggle('active', tabs[i] === name);
   });
   document.querySelectorAll('.tab-panel').forEach(p => {
@@ -208,6 +214,107 @@ async function loadReport() {
     </ol></div>`;
   }
   document.getElementById('ai-section').innerHTML = aiHtml || '<p class="empty-text">AI analysis not available for this case.</p>';
+
+  // Investigation tab
+  let invHtml = '';
+
+  // Attack Timeline
+  const at = f.attack_timeline || {};
+  invHtml += `<div class="inv-section">
+    <h3>Attack Timeline</h3>
+    <div class="inv-grid">
+      <div class="inv-card ${at.encryption_start ? 'highlight' : ''}">
+        <div class="inv-label">Encryption Started</div>
+        <div class="inv-value">${at.encryption_start ? formatTime(at.encryption_start) : 'Not determined'}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Encryption Ended</div>
+        <div class="inv-value">${at.encryption_end ? formatTime(at.encryption_end) : '—'}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Duration</div>
+        <div class="inv-value">${at.duration_minutes ? at.duration_minutes.toFixed(0) + ' minutes' : '—'}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Timeline Events</div>
+        <div class="inv-value">${at.total_events || 0}</div>
+      </div>
+    </div>
+    ${at.patient_zero ? `<div class="patient-zero"><strong>Patient Zero (first encrypted file):</strong><br><span class="mono">${esc(at.patient_zero)}</span></div>` : ''}
+    ${(at.phases||[]).map(p => `<div class="phase-card"><strong>${esc(p.name)}</strong> — ${esc(p.description)} <span class="badge badge-gray">${p.events} events</span></div>`).join('')}
+  </div>`;
+
+  // Shadow Copies
+  const sc = f.shadow_copies || {};
+  invHtml += `<div class="inv-section">
+    <h3>Shadow Copy (VSS) Recovery</h3>
+    <div class="inv-grid">
+      <div class="inv-card ${sc.found > 0 ? 'highlight' : ''}">
+        <div class="inv-label">Snapshots Found</div>
+        <div class="inv-value">${sc.found ?? '—'}</div>
+      </div>
+      <div class="inv-card ${sc.recovered_files > 0 ? 'highlight' : ''}">
+        <div class="inv-label">Files Recovered</div>
+        <div class="inv-value">${sc.recovered_files ?? 0}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Attacker Tried to Delete</div>
+        <div class="inv-value">${sc.attacker_tried_delete ? '⚠ Yes' : 'No evidence'}</div>
+      </div>
+      <div class="inv-card ${sc.deletion_failed ? 'highlight' : ''}">
+        <div class="inv-label">Deletion Failed (files survived)</div>
+        <div class="inv-value">${sc.deletion_failed ? '✓ YES — recoverable!' : sc.attacker_tried_delete ? 'Deletion succeeded' : '—'}</div>
+      </div>
+    </div>
+  </div>`;
+
+  // Memory Analysis
+  const mem = f.memory_analysis || {};
+  invHtml += `<div class="inv-section">
+    <h3>Memory Analysis</h3>
+    <div class="inv-grid">
+      <div class="inv-card ${mem.potential_keys > 0 ? 'highlight' : ''}">
+        <div class="inv-label">Key Material in Memory</div>
+        <div class="inv-value">${mem.potential_keys > 0 ? mem.potential_keys + ' candidates' : 'None found'}</div>
+      </div>
+      <div class="inv-card ${mem.credentials > 0 ? 'highlight' : ''}">
+        <div class="inv-label">Credentials Found</div>
+        <div class="inv-value">${mem.credentials || 0}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">C2 Indicators</div>
+        <div class="inv-value">${mem.c2_indicators || 0}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Memory Files</div>
+        <div class="inv-value">${(mem.files_found||[]).length}</div>
+      </div>
+    </div>
+    ${(mem.notes||[]).map(n => `<p class="inv-note">${esc(n)}</p>`).join('')}
+  </div>`;
+
+  // File Recovery
+  const fr = f.file_recovery || {};
+  invHtml += `<div class="inv-section">
+    <h3>Deleted File Recovery</h3>
+    <div class="inv-grid">
+      <div class="inv-card ${fr.total_recovered > 0 ? 'highlight' : ''}">
+        <div class="inv-label">Files Recovered</div>
+        <div class="inv-value">${fr.total_recovered || 0}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Deleted MFT Entries</div>
+        <div class="inv-value">${fr.mft_deleted_entries || 0}</div>
+      </div>
+      <div class="inv-card">
+        <div class="inv-label">Tool Used</div>
+        <div class="inv-value">${esc(fr.tool_used || '—')}</div>
+      </div>
+    </div>
+    ${(fr.notes||[]).map(n => `<p class="inv-note">${esc(n)}</p>`).join('')}
+  </div>`;
+
+  document.getElementById('investigation-section').innerHTML = invHtml;
 }
 
 function formatVector(v) {
