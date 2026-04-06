@@ -150,10 +150,18 @@ def mount_drive_readonly(
     # Ensure mount base directory exists
     Path(mount_base).mkdir(parents=True, exist_ok=True)
 
-    # Apply write protection BEFORE mounting (non-fatal — some drives reject blockdev)
+    # If device is already mounted elsewhere, unmount it first
+    existing_mount = _get_current_mountpoint(device)
+    if existing_mount:
+        logger.warning(f"{device} is mounted at {existing_mount} — unmounting before analysis")
+        result = subprocess.run(["umount", device], capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(f"Could not unmount {device} from {existing_mount}: {result.stderr.strip()}")
+
+    # Apply write protection BEFORE mounting (non-fatal — RAID/some drives reject blockdev)
     wp_ok = _set_write_protection(device, protect=True)
     if not wp_ok:
-        logger.warning(f"blockdev --setro failed for {device} — continuing with mount -o ro only")
+        logger.warning(f"blockdev --setro unavailable for {device} — relying on mount -o ro")
 
     # Create unique mount point
     timestamp = int(time.time())
@@ -336,6 +344,17 @@ def _get_parent_disk(device: str) -> str:
     if result.returncode == 0 and result.stdout.strip():
         return f"/dev/{result.stdout.strip()}"
     return device
+
+
+def _get_current_mountpoint(device: str) -> Optional[str]:
+    """Return the current mountpoint of a device, or None if not mounted."""
+    result = subprocess.run(
+        ["findmnt", "-n", "-o", "TARGET", device],
+        capture_output=True, text=True
+    )
+    if result.returncode == 0 and result.stdout.strip():
+        return result.stdout.strip()
+    return None
 
 
 def _get_partitions(device: str) -> list[str]:
