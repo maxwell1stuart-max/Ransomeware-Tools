@@ -205,7 +205,9 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         case["progress"] = 35
 
         from rft.forensics.artifact_collector import collect_artifacts
-        collection = collect_artifacts(mounted.mount_point)
+        case_output_dir = str(OUTPUT_DIR / case_id)
+        Path(case_output_dir).mkdir(parents=True, exist_ok=True)
+        collection = collect_artifacts(mounted.mount_point, case_output_dir)
 
         log(f"Found {len(collection.ransom_notes)} ransom note(s)", "success" if collection.ransom_notes else "warn")
         log(f"Found {len(collection.encrypted_files)} encrypted file(s)")
