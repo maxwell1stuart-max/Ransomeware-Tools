@@ -80,6 +80,17 @@
         <p>Create a bit-for-bit copy (DD format). Takes longer but preserves drive for lab analysis.</p>
       </div>
     </div>
+
+    <div class="option-card">
+      <div class="option-toggle">
+        <input type="checkbox" id="skip_hash">
+        <label for="skip_hash"></label>
+      </div>
+      <div class="option-body">
+        <h3>Quick Mode (skip hashing)</h3>
+        <p>Skips the SHA-256 drive hash so analysis starts immediately. Use for testing or when chain of custody isn't needed.</p>
+      </div>
+    </div>
   </div>
 
   <div class="victim-form">
@@ -248,6 +259,7 @@ async function startAnalysis() {
       device: selectedDevice.device,
       use_ai: document.getElementById('use_ai').checked,
       acquire_image: document.getElementById('acquire_image').checked,
+      skip_hash: document.getElementById('skip_hash').checked,
     })
   }).then(r => r.json());
 

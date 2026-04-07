@@ -130,7 +130,8 @@ def list_available_drives() -> list[dict]:
 def mount_drive_readonly(
     device: str,
     mount_base: str = "/mnt/forensics",
-    case_id: str = "case_001"
+    case_id: str = "case_001",
+    skip_hash: bool = False,
 ) -> Optional[MountedDrive]:
     """
     Mount a device in read-only mode with software write blocking.
@@ -221,8 +222,17 @@ def mount_drive_readonly(
         raise RuntimeError(f"Could not mount {mount_device}: {err_detail}")
 
     # Hash the device for chain of custody
-    logger.info(f"Hashing {device} for chain of custody (this may take a while)...")
-    device_hash = _hash_device(device)
+    if skip_hash:
+        logger.warning(f"Skipping hash (skip_hash=True) — chain of custody not established")
+        device_hash = "HASH_SKIPPED"
+    else:
+        logger.info(f"Hashing {mount_device} for chain of custody (may take 10-20 min on large drives)...")
+        def _hash_progress(done, total):
+            pct = done * 100 // total
+            done_gb = done / (1024**3)
+            total_gb = total / (1024**3)
+            logger.info(f"Hashing progress: {pct}% ({done_gb:.1f} / {total_gb:.1f} GB)")
+        device_hash = _hash_device(mount_device, progress_callback=_hash_progress)
 
     # Get device info
     device_info = _get_device_info(device)
@@ -298,19 +308,40 @@ def _detect_filesystem(device: str) -> Optional[str]:
     return None
 
 
-def _hash_device(device: str, chunk_size: int = 65536) -> str:
+def _hash_device(device: str, chunk_size: int = 65536, progress_callback=None) -> str:
     """
     Compute SHA-256 of the raw device bytes.
     Uses streaming reads to handle large drives without memory issues.
+    Calls progress_callback(bytes_done, total_bytes) periodically if provided.
     """
     sha256 = hashlib.sha256()
+    total = 0
     try:
+        # Get device size for progress reporting
+        size = 0
+        try:
+            size_result = subprocess.run(
+                ["blockdev", "--getsize64", device],
+                capture_output=True, text=True
+            )
+            if size_result.returncode == 0:
+                size = int(size_result.stdout.strip())
+        except Exception:
+            pass
+
         with open(device, "rb") as f:
+            last_report = 0
             while True:
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
                 sha256.update(chunk)
+                total += len(chunk)
+                # Report every 512MB
+                if progress_callback and size and (total - last_report) >= 512 * 1024 * 1024:
+                    progress_callback(total, size)
+                    last_report = total
+
     except PermissionError:
         logger.error(f"Cannot read {device}: permission denied (run as root)")
         return "ERROR_PERMISSION_DENIED"

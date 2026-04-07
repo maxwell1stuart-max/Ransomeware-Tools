@@ -140,6 +140,7 @@ def start_analysis():
     device = data.get("device")
     use_ai = data.get("use_ai", True)
     acquire_image = data.get("acquire_image", False)
+    skip_hash = data.get("skip_hash", False)
 
     if not device:
         return jsonify({"error": "No device specified"}), 400
@@ -155,15 +156,16 @@ def start_analysis():
         "findings": None,
         "error": None,
         "use_ai": use_ai,
+        "skip_hash": skip_hash,
     }
 
     # Run analysis in background thread
-    run_async(_run_analysis(case_id, device, use_ai, acquire_image))
+    run_async(_run_analysis(case_id, device, use_ai, acquire_image, skip_hash))
 
     return jsonify({"case_id": case_id, "status": "started"})
 
 
-async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: bool):
+async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: bool, skip_hash: bool = False):
     """Full analysis pipeline — runs in background thread."""
     case = active_cases[case_id]
 
@@ -178,7 +180,9 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         case["progress"] = 5
 
         from rft.forensics.safe_mount import mount_drive_readonly
-        mounted = mount_drive_readonly(device, "/mnt/forensics", case_id)
+        if skip_hash:
+            log("Quick Mode: skipping SHA-256 hash (chain of custody not established)", "warn")
+        mounted = mount_drive_readonly(device, "/mnt/forensics", case_id, skip_hash=skip_hash)
         if not mounted:
             raise RuntimeError(f"Failed to mount {device} — unknown error")
 
