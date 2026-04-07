@@ -380,14 +380,20 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         from rft.reporting.fbi_report import VictimInfo
 
         victim = VictimInfo(
-            name=case.get("victim_name", ""),
-            organization=case.get("victim_org", ""),
-            email=case.get("victim_email", ""),
-            phone=case.get("victim_phone", ""),
-            city=case.get("victim_city", ""),
+            organization_name=case.get("victim_org", "Unknown Organization"),
+            contact_name=case.get("victim_name", ""),
+            contact_email=case.get("victim_email", ""),
+            contact_phone=case.get("victim_phone", ""),
+            organization_type=case.get("victim_org_type", "business"),
             state=case.get("victim_state", ""),
         )
-        report = generate_fbi_report(analysis, ai_result, victim, output_dir=str(OUTPUT_DIR / case_id))
+        report = generate_fbi_report(analysis, ai_result, victim)
+        # Save the report to disk
+        from rft.reporting.fbi_report import save_report_json, save_report_text
+        case_out = OUTPUT_DIR / case_id
+        case_out.mkdir(parents=True, exist_ok=True)
+        save_report_json(report, str(case_out / "fbi_report.json"))
+        save_report_text(report, str(case_out / "fbi_report.txt"))
         log(f"Reports saved to: output/{case_id}/", "success")
 
         # Build findings summary for the UI
@@ -444,8 +450,8 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
                 "mft_deleted_entries": len(recovery_result.mft_deleted_entries) if recovery_result else 0,
                 "notes": recovery_result.notes if recovery_result else [],
             } if recovery_result else None,
-            "report_txt": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.txt"),
-            "report_json": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.json"),
+            "report_txt": str(OUTPUT_DIR / case_id / "fbi_report.txt"),
+            "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
             "report_pdf": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.pdf"),
         }
 
