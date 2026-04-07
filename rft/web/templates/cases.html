@@ -26,28 +26,37 @@ async function loadCases() {
   }
 
   el.innerHTML = `
+    <div style="margin-bottom:1rem;color:var(--text-muted);font-size:0.85rem;">
+      ${cases.length} case record${cases.length !== 1 ? 's' : ''} — persisted across restarts
+    </div>
     <div class="table-container">
       <table class="data-table">
         <thead>
           <tr>
             <th>Case ID</th>
             <th>Device</th>
-            <th>Family</th>
+            <th>Ransomware Family</th>
+            <th>Files Encrypted</th>
+            <th>Attack Vector</th>
             <th>Status</th>
-            <th>Date</th>
+            <th>Started</th>
+            <th>Completed</th>
             <th>Actions</th>
           </tr>
         </thead>
         <tbody>
           ${cases.map(c => `
             <tr>
-              <td class="mono">${esc(c.case_id)}</td>
-              <td class="mono">${esc(c.device || '—')}</td>
+              <td class="mono" style="font-size:0.8rem;">${esc(c.case_id)}</td>
+              <td class="mono" style="font-size:0.8rem;">${esc(c.device || '—')}</td>
               <td><span class="badge badge-${c.family === 'Unknown' ? 'gray' : 'red'}">${esc(c.family || 'Unknown')}</span></td>
+              <td style="text-align:right;">${c.encrypted_count ? c.encrypted_count.toLocaleString() : '—'}</td>
+              <td style="font-size:0.85rem;">${esc(c.attack_vector || '—')}</td>
               <td><span class="badge badge-${statusColor(c.status)}">${esc(c.status)}</span></td>
-              <td>${formatDate(c.started_at)}</td>
-              <td>
-                <a href="/report/${esc(c.case_id)}" class="btn btn-ghost btn-sm">View Report</a>
+              <td style="font-size:0.8rem;">${formatDate(c.started_at)}</td>
+              <td style="font-size:0.8rem;">${c.completed_at ? formatDate(c.completed_at) : '—'}</td>
+              <td style="white-space:nowrap;">
+                ${c.has_report ? `<a href="/report/${esc(c.case_id)}" class="btn btn-ghost btn-sm">Report</a>` : '<span style="color:var(--text-muted);font-size:0.8rem;">No report</span>'}
               </td>
             </tr>
           `).join('')}

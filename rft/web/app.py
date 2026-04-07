@@ -19,12 +19,36 @@ from flask import Flask, Response, jsonify, render_template, request, send_file,
 app = Flask(__name__)
 app.secret_key = os.urandom(24)
 
-# In-memory session store (cases survive until reboot; for persistence use KB)
-active_cases: dict[str, dict] = {}
-
-# Output dir for reports
+# Output dir for reports and case index
 OUTPUT_DIR = Path(os.environ.get("RFT_OUTPUT", Path.home() / ".rft" / "output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+CASES_INDEX = OUTPUT_DIR / "cases_index.json"
+
+
+def _load_cases() -> dict:
+    """Load persisted case records from disk."""
+    if CASES_INDEX.exists():
+        try:
+            return json.loads(CASES_INDEX.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _save_cases():
+    """Persist current case index to disk (excluding large log arrays)."""
+    slim = {}
+    for cid, c in active_cases.items():
+        slim[cid] = {k: v for k, v in c.items() if k != "log"}
+    try:
+        CASES_INDEX.write_text(json.dumps(slim, indent=2, default=str))
+    except Exception:
+        pass
+
+
+# Load any previously saved cases on startup
+active_cases: dict[str, dict] = _load_cases()
 
 
 # ─── Helper: run async in background thread ──────────────────────────────────
@@ -164,6 +188,7 @@ def start_analysis():
         "skip_hash": skip_hash,
     }
 
+    _save_cases()  # Persist new case immediately
     # Run analysis in background thread
     run_async(_run_analysis(case_id, device, use_ai, acquire_image, skip_hash))
 
@@ -469,6 +494,7 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
 
         case["status"] = "complete"
         case["progress"] = 100
+        case["completed_at"] = datetime.now().isoformat()
         log("Analysis complete!", "success")
 
         # Verify drive integrity
@@ -480,7 +506,11 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
     except Exception as e:
         case["status"] = "error"
         case["error"] = str(e)
+        case["completed_at"] = datetime.now().isoformat()
         log(f"ERROR: {e}", "error")
+
+    finally:
+        _save_cases()  # Persist final state regardless of success/failure
 
 
 # ─── API: Case Status (polling) ────────────────────────────────────────────────
@@ -576,14 +606,19 @@ def download_report(case_id, fmt):
 def list_cases():
     summary = []
     for cid, c in active_cases.items():
+        findings = c.get("findings") or {}
         summary.append({
             "case_id": cid,
             "device": c.get("device"),
             "started_at": c.get("started_at"),
+            "completed_at": c.get("completed_at"),
             "status": c.get("status"),
-            "family": (c.get("findings") or {}).get("family", "Unknown"),
+            "family": findings.get("family", "Unknown"),
+            "encrypted_count": findings.get("encrypted_count", 0),
+            "attack_vector": findings.get("attack_vector", ""),
+            "has_report": bool(findings.get("report_txt")),
         })
-    return jsonify({"cases": sorted(summary, key=lambda x: x["started_at"], reverse=True)})
+    return jsonify({"cases": sorted(summary, key=lambda x: x["started_at"] or "", reverse=True)})
 
 
 # ─── API: Knowledge base stats ────────────────────────────────────────────────
