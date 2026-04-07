@@ -326,7 +326,7 @@ def _determine_attack_vector(
     initial_user = None
 
     # RDP brute force: many failed logons from one IP
-    bf_ips = {ip: c for ip, c in logs.brute_force_ips.items() if c >= 10}
+    bf_ips = {ip: c for ip, c in logs.brute_force_ips.items() if c >= 10} if logs else {}
     if bf_ips:
         top_ip = max(bf_ips, key=bf_ips.get)
         top_count = bf_ips[top_ip]
@@ -336,13 +336,13 @@ def _determine_attack_vector(
         initial_ip = top_ip
 
         # Find first successful RDP logon from this IP
-        for e in logs.logon_events:
+        for e in (logs.logon_events if logs else []):
             if e.source_ip == top_ip and e.logon_type == 10:
                 first_time = e.timestamp.isoformat()
                 initial_user = e.username
                 break
 
-    elif logs.rdp_sessions:
+    elif logs and logs.rdp_sessions:
         evidence.append(f"RDP sessions detected: {len(logs.rdp_sessions)}")
         primary = "rdp_credential_stuffing"
         confidence = 0.6
@@ -352,7 +352,7 @@ def _determine_attack_vector(
             initial_user = s.get("username")
             first_time = s.get("timestamp")
 
-    elif logs.powershell_executions:
+    elif logs and logs.powershell_executions:
         suspicious = [p for p in logs.powershell_executions if p.get("suspicious")]
         if suspicious:
             evidence.append(f"Suspicious PowerShell execution detected")
@@ -378,6 +378,8 @@ def _determine_attack_vector(
 
 def _detect_lateral_movement(logs: LogAnalysisResult) -> bool:
     """Look for indicators of lateral movement across systems."""
+    if not logs:
+        return False
     # Multiple unique source IPs in logon events
     source_ips = {e.source_ip for e in logs.logon_events if e.source_ip}
     if len(source_ips) > 3:
@@ -415,7 +417,7 @@ def _extract_ransom_details(note_text: str) -> tuple[Optional[str], Optional[str
 
 
 def _get_earliest_indicator(logs: LogAnalysisResult) -> Optional[str]:
-    if logs.timeline_entries:
+    if logs and logs.timeline_entries:
         return logs.timeline_entries[0].timestamp.isoformat()
     return None
 
@@ -444,6 +446,8 @@ def _estimate_encryption_time(
 
 def _identify_affected_systems(logs: LogAnalysisResult) -> list[str]:
     """Identify hostnames/IPs that show signs of compromise."""
+    if not logs:
+        return []
     systems = set()
     for event in logs.logon_events:
         if event.workstation:
@@ -492,15 +496,15 @@ def _generate_recommendations(
         "8. Engage a professional incident response firm for remediation",
     ]
 
-    # Vector-specific
-    if logs.brute_force_ips:
+    # Vector-specific (only if logs were available)
+    if logs and logs.brute_force_ips:
         recs.append("9. Block all external RDP — RDP should never be internet-exposed")
         recs.append("10. Enable MFA on all remote access methods immediately")
 
-    if logs.new_accounts:
+    if logs and logs.new_accounts:
         recs.append("11. Audit all user accounts — attacker created backdoor accounts")
 
-    if logs.log_cleared_events:
+    if logs and logs.log_cleared_events:
         recs.append("12. Restore event logs from backup — attacker cleared security logs")
 
     return recs
