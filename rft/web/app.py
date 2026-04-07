@@ -50,6 +50,23 @@ def _save_cases():
 # Load any previously saved cases on startup
 active_cases: dict[str, dict] = _load_cases()
 
+# Load persisted settings (API key, etc.) into environment on startup
+_SETTINGS_PATH = Path("/opt/rft/settings.json")
+
+
+def _load_settings():
+    """Apply saved settings to the environment (e.g. ANTHROPIC_API_KEY)."""
+    if _SETTINGS_PATH.exists():
+        try:
+            settings = json.loads(_SETTINGS_PATH.read_text())
+            if settings.get("api_key"):
+                os.environ["ANTHROPIC_API_KEY"] = settings["api_key"]
+        except Exception:
+            pass
+
+
+_load_settings()
+
 
 # ─── Helper: run async in background thread ──────────────────────────────────
 
