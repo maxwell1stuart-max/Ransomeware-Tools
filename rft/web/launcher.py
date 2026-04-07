@@ -118,10 +118,11 @@ def run_server(debug: bool = False):
             sys.argv = [
                 "gunicorn",
                 f"--bind={HOST}:{PORT}",
-                "--workers=2",
+                "--workers=1",        # 1 worker — Pi doesn't have RAM for 2
                 "--threads=4",
-                "--timeout=300",
+                "--timeout=600",      # 10 min timeout for large drives
                 "--worker-class=gthread",
+                "--worker-connections=10",
                 "rft.web.app:app",
             ]
             gunicorn_run()

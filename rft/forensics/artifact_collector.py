@@ -230,11 +230,15 @@ def _walk_filesystem(mount_point: str) -> Generator[Path, None, None]:
         "$Recycle.Bin", "System Volume Information",
         "pagefile.sys", "hiberfil.sys"
     }
+    file_count = 0
     for root, dirs, files in os.walk(mount_point):
-        # Prune skip directories in-place
         dirs[:] = [d for d in dirs if d not in skip_dirs]
         for fname in files:
             yield Path(root) / fname
+            file_count += 1
+            # Yield CPU every 500 files to keep the Pi responsive
+            if file_count % 500 == 0:
+                time.sleep(0.005)
 
 
 def _is_ransom_note(path: Path) -> bool:

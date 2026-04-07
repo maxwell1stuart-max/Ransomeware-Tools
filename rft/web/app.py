@@ -166,8 +166,20 @@ def start_analysis():
 
 
 async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: bool, skip_hash: bool = False):
-    """Full analysis pipeline — runs in background thread."""
+    """Full analysis pipeline — runs in background thread at low OS priority."""
     case = active_cases[case_id]
+
+    # Lower CPU and I/O priority so the Pi stays responsive during analysis
+    try:
+        os.nice(15)  # Lower CPU priority (0=normal, 19=lowest)
+    except (PermissionError, OSError):
+        pass
+    try:
+        # Set I/O to idle class — only reads disk when nothing else needs it
+        subprocess.run(["ionice", "-c", "3", "-p", str(os.getpid())],
+                       capture_output=True)
+    except Exception:
+        pass
 
     def log(msg: str, level: str = "info"):
         entry = {"time": datetime.now().strftime("%H:%M:%S"), "level": level, "msg": msg}

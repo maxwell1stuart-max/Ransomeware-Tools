@@ -308,7 +308,7 @@ def _detect_filesystem(device: str) -> Optional[str]:
     return None
 
 
-def _hash_device(device: str, chunk_size: int = 65536, progress_callback=None) -> str:
+def _hash_device(device: str, chunk_size: int = 1024 * 1024, progress_callback=None) -> str:
     """
     Compute SHA-256 of the raw device bytes.
     Uses streaming reads to handle large drives without memory issues.
@@ -331,13 +331,18 @@ def _hash_device(device: str, chunk_size: int = 65536, progress_callback=None) -
 
         with open(device, "rb") as f:
             last_report = 0
+            last_yield = 0
             while True:
                 chunk = f.read(chunk_size)
                 if not chunk:
                     break
                 sha256.update(chunk)
                 total += len(chunk)
-                # Report every 512MB
+                # Yield CPU every 64MB so the OS stays responsive
+                if total - last_yield >= 64 * 1024 * 1024:
+                    time.sleep(0.01)
+                    last_yield = total
+                # Report progress every 512MB
                 if progress_callback and size and (total - last_report) >= 512 * 1024 * 1024:
                     progress_callback(total, size)
                     last_report = total
