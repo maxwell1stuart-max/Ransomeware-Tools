@@ -172,12 +172,11 @@ def analyze_memory(
 
 
 def _find_memory_files(mount_point: str) -> list[Path]:
-    """Find memory dump files on the mounted drive."""
-    memory_extensions = {".raw", ".mem", ".dmp", ".vmem", ".bin"}
+    """Find memory dump files on the mounted drive — checks known locations only."""
     memory_filenames = {
         "pagefile.sys",
         "swapfile.sys",
-        "hiberfil.sys",   # Hibernation = full RAM snapshot
+        "hiberfil.sys",
         "MEMORY.DMP",
         "memory.dmp",
     }
@@ -185,35 +184,27 @@ def _find_memory_files(mount_point: str) -> list[Path]:
     found = []
     mount = Path(mount_point)
 
-    # Check known locations first
+    # Only check known fixed locations — no recursive walk
     known_paths = [
         mount / "pagefile.sys",
         mount / "swapfile.sys",
         mount / "hiberfil.sys",
         mount / "Windows" / "MEMORY.DMP",
+        mount / "Windows" / "memory.dmp",
         mount / "Windows" / "Minidump",
     ]
 
     for p in known_paths:
-        if p.is_file() and p.stat().st_size > 1024 * 1024:  # >1MB
-            found.append(p)
-        elif p.is_dir():
-            for dmp in p.glob("*.dmp"):
-                found.append(dmp)
+        try:
+            if p.is_file() and p.stat().st_size > 1024 * 1024:  # >1MB
+                found.append(p)
+            elif p.is_dir():
+                for dmp in list(p.glob("*.dmp"))[:10]:  # Cap at 10 minidumps
+                    found.append(dmp)
+        except (PermissionError, OSError):
+            pass
 
-    # Search for explicit dump files in user directories
-    try:
-        for user_dir in (mount / "Users").iterdir():
-            if not user_dir.is_dir():
-                continue
-            for ext in memory_extensions:
-                for f in user_dir.rglob(f"*{ext}"):
-                    if f.stat().st_size > 10 * 1024 * 1024:  # >10MB likely a real dump
-                        found.append(f)
-    except (PermissionError, FileNotFoundError):
-        pass
-
-    return list(set(found))  # Deduplicate
+    return found
 
 
 def _analyze_with_volatility(
