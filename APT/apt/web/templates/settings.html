@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+{% block title %}Settings — APT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Settings</h1>
+  <p class="subtitle">APT configuration and tool status</p>
+</div>
+
+<div class="card" style="max-width:600px;">
+  <div class="card-header"><h2>Tool Status</h2></div>
+  <div id="tool-status">
+    <div style="color:var(--text-muted);font-size:0.85rem;">Checking installed tools...</div>
+  </div>
+</div>
+
+<div class="card" style="max-width:600px;">
+  <div class="card-header"><h2>Default Wordlists</h2></div>
+  <div style="font-size:0.875rem;color:var(--text-muted);line-height:1.8;">
+    Credential testing uses built-in common credentials (no wordlist needed for basic testing).<br>
+    For extended wordlists, install: <code>sudo apt-get install wordlists</code><br>
+    Then gunzip: <code>sudo gunzip /usr/share/wordlists/rockyou.txt.gz</code>
+  </div>
+</div>
+
+<div class="card" style="max-width:600px;">
+  <div class="card-header"><h2>Examiner</h2></div>
+  <div class="form-group">
+    <label>Your Name / Organization</label>
+    <input type="text" id="examiner_name" class="form-control" placeholder="e.g. Security Team, Pen Test LLC">
+  </div>
+  <button class="btn btn-primary" onclick="saveSettings()">Save</button>
+  <span id="save-msg" style="margin-left:1rem;font-size:0.85rem;color:var(--accent-green);display:none;">Saved</span>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const REQUIRED_TOOLS = [
+  {name:'nmap', desc:'Host discovery & vulnerability scanning'},
+  {name:'hydra', desc:'Credential testing'},
+  {name:'msfconsole', desc:'Metasploit exploitation framework'},
+  {name:'nikto', desc:'Web application scanning'},
+  {name:'enum4linux', desc:'SMB/AD enumeration'},
+  {name:'crackmapexec', desc:'Windows network enumeration (also: netexec, cme)'},
+  {name:'whatweb', desc:'Web technology fingerprinting'},
+];
+
+async function checkTools() {
+  // We check tool status via a simple API endpoint
+  // For now show a static table — in production this would hit /api/tool-status
+  const el = document.getElementById('tool-status');
+  el.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Tool</th><th>Purpose</th><th>Install</th></tr></thead>
+      <tbody>
+        ${REQUIRED_TOOLS.map(t => `
+          <tr>
+            <td class="mono">${t.name}</td>
+            <td style="font-size:0.8rem;color:var(--text-muted);">${t.desc}</td>
+            <td style="font-size:0.8rem;"><code>sudo apt-get install ${t.name}</code></td>
+          </tr>
+        `).join('')}
+      </tbody>
+    </table>
+    <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">
+      Install all at once: <code>sudo apt-get install -y nmap hydra metasploit-framework nikto enum4linux crackmapexec whatweb</code>
+    </div>
+  `;
+}
+
+async function loadSettings() {
+  const s = await fetch('/api/settings').then(r => r.json()).catch(() => ({}));
+  if (s.examiner_name) document.getElementById('examiner_name').value = s.examiner_name;
+}
+
+async function saveSettings() {
+  const data = {
+    examiner_name: document.getElementById('examiner_name').value.trim(),
+  };
+  await fetch('/api/settings', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify(data),
+  });
+  const msg = document.getElementById('save-msg');
+  msg.style.display = 'inline';
+  setTimeout(() => msg.style.display = 'none', 2000);
+}
+
+checkTools();
+loadSettings();
+</script>
+{% endblock %}

@@ -1,0 +1,428 @@
+{% extends "base.html" %}
+{% block title %}New Scan — APT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <div>
+    <h1>New Scan</h1>
+    <p class="subtitle">Configure scope, confirm authorization, and start automated penetration test</p>
+  </div>
+</div>
+
+<!-- Active scan banner (shown if scan already running) -->
+<div class="active-scan-banner" id="active-banner" style="display:none;">
+  <div class="banner-left">
+    <div class="spinner"></div>
+    <div>
+      <strong>Scan in Progress</strong> &nbsp;
+      <span id="banner-case-id" style="font-family:monospace;font-size:0.85rem;color:var(--accent-blue);"></span>
+      <div id="banner-status" style="font-size:0.8rem;color:var(--text-muted);margin-top:2px;"></div>
+    </div>
+  </div>
+  <div style="display:flex;gap:0.5rem;">
+    <a id="banner-report-link" href="#" class="btn btn-primary btn-sm" style="display:none;">View Report</a>
+    <button class="btn btn-ghost btn-sm" onclick="clearActiveScan()">✕ Clear</button>
+  </div>
+</div>
+
+<!-- Scope configuration form -->
+<div id="scan-form-wrap">
+  <div class="card scope-form">
+    <div class="card-header"><h2>Scope Configuration</h2></div>
+
+    <div class="form-grid">
+      <div class="form-group">
+        <label>Target Subnet</label>
+        <input type="text" id="subnet" class="form-control" placeholder="192.168.1.0/24">
+        <div style="font-size:0.75rem;color:var(--text-muted);margin-top:4px;" id="subnet-hint">Detecting local network...</div>
+      </div>
+      <div class="form-group">
+        <label>Authorized By <span style="color:var(--accent-red)">*</span></label>
+        <input type="text" id="authorized_by" class="form-control" placeholder="Full name of authorizing party">
+      </div>
+    </div>
+
+    <div class="form-group">
+      <label>Authorization Notes</label>
+      <textarea id="authorization_notes" class="form-control" rows="2"
+        placeholder="Reference: engagement letter, ticket #, client approval, etc."></textarea>
+    </div>
+
+    <div class="form-group">
+      <label>Aggression Level</label>
+      <div style="display:flex;gap:0.5rem;flex-wrap:wrap;">
+        <label class="aggression-opt" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--border);border-radius:6px;cursor:pointer;">
+          <input type="radio" name="aggression" value="passive" id="agg-passive">
+          <div>
+            <div style="font-weight:600;">Passive</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">Discovery + vuln scan only. No brute force.</div>
+          </div>
+        </label>
+        <label class="aggression-opt" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--accent-blue);border-radius:6px;cursor:pointer;background:var(--accent-blue-dim);">
+          <input type="radio" name="aggression" value="normal" id="agg-normal" checked>
+          <div>
+            <div style="font-weight:600;">Normal</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">+ Credential testing (common passwords)</div>
+          </div>
+        </label>
+        <label class="aggression-opt" style="display:flex;align-items:center;gap:6px;padding:8px 14px;border:1px solid var(--border);border-radius:6px;cursor:pointer;">
+          <input type="radio" name="aggression" value="aggressive" id="agg-aggressive">
+          <div>
+            <div style="font-weight:600;color:var(--accent-orange);">Aggressive</div>
+            <div style="font-size:0.75rem;color:var(--text-muted);">+ Metasploit exploitation (CVE-confirmed)</div>
+          </div>
+        </label>
+      </div>
+    </div>
+
+    <div style="display:flex;gap:1rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <label style="display:flex;align-items:center;gap:6px;font-size:0.85rem;cursor:pointer;">
+        <input type="checkbox" id="skip_ping"> Treat all hosts as up (skip ping — use for firewalled networks)
+      </label>
+    </div>
+
+    <div class="legal-check">
+      <input type="checkbox" id="auth-confirm">
+      <div>
+        <strong>Authorization Confirmation</strong><br>
+        I confirm that I have written authorization to perform a penetration test on the target network.
+        Unauthorized testing is illegal under the Computer Fraud and Abuse Act (CFAA) and equivalent laws.
+        This tool is for authorized security testing only.
+      </div>
+    </div>
+
+    <button class="btn btn-primary" id="start-btn" onclick="startScan()" style="width:100%;padding:12px;font-size:1rem;">
+      Start Automated Penetration Test
+    </button>
+  </div>
+</div>
+
+<!-- Active scan view -->
+<div id="scan-progress-wrap" style="display:none;">
+  <div class="card">
+    <div class="card-header" style="display:flex;justify-content:space-between;align-items:center;">
+      <div>
+        <h2>Scan In Progress</h2>
+        <div class="mono" style="font-size:0.8rem;color:var(--text-muted);" id="progress-case-id"></div>
+      </div>
+      <button class="btn btn-danger btn-sm" onclick="cancelScan()">✕ Cancel</button>
+    </div>
+
+    <div style="margin-bottom:1rem;">
+      <div style="display:flex;justify-content:space-between;margin-bottom:4px;">
+        <span id="phase-label" style="font-size:0.875rem;color:var(--accent-blue);">Starting...</span>
+        <span id="progress-pct" style="font-size:0.875rem;color:var(--text-muted);">0%</span>
+      </div>
+      <div class="progress-bar-wrap">
+        <div class="progress-bar-fill" id="progress-fill" style="width:0%"></div>
+      </div>
+    </div>
+
+    <!-- Phase indicators -->
+    <div style="display:flex;gap:0.5rem;flex-wrap:wrap;margin-bottom:1rem;">
+      <span class="phase-chip" id="chip-discovery">Discovery</span>
+      <span class="phase-chip" id="chip-enumeration">Enumeration</span>
+      <span class="phase-chip" id="chip-vulnscan">Vuln Scan</span>
+      <span class="phase-chip" id="chip-credtest">Cred Test</span>
+      <span class="phase-chip" id="chip-exploitation">Exploit</span>
+      <span class="phase-chip" id="chip-reporting">Report</span>
+    </div>
+
+    <div class="log-console" id="scan-log" style="height:320px;overflow-y:auto;"></div>
+  </div>
+</div>
+
+<!-- Completion view -->
+<div id="scan-complete-wrap" style="display:none;">
+  <div class="card" style="text-align:center;padding:2rem;">
+    <div style="font-size:3rem;margin-bottom:0.5rem;" id="complete-icon">✓</div>
+    <h2 id="complete-title">Scan Complete</h2>
+    <p id="complete-subtitle" style="color:var(--text-muted);margin:0.5rem 0 1.5rem;"></p>
+    <div style="display:flex;gap:1rem;justify-content:center;">
+      <a id="view-report-btn" href="#" class="btn btn-primary">View Full Report</a>
+      <button class="btn btn-secondary" onclick="startNewScan()">New Scan</button>
+    </div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+.phase-chip {
+  padding: 3px 10px;
+  border-radius: 20px;
+  font-size: 0.75rem;
+  background: var(--bg-tertiary);
+  color: var(--text-muted);
+  border: 1px solid var(--border);
+  transition: all 0.2s;
+}
+.phase-chip.active {
+  background: var(--accent-blue-dim);
+  color: var(--accent-blue-bright);
+  border-color: var(--accent-blue);
+}
+.phase-chip.done {
+  background: #1a3a2a;
+  color: var(--accent-green);
+  border-color: var(--accent-green);
+}
+</style>
+<script>
+const PHASE_LABELS = {
+  discovery: 'Phase 1: Discovering hosts on network...',
+  enumeration: 'Phase 2: Enumerating services and open ports...',
+  vulnscan: 'Phase 3: Scanning for vulnerabilities (CVEs)...',
+  webscan: 'Phase 4: Scanning web applications...',
+  credtest: 'Phase 4: Testing credentials (Hydra)...',
+  exploitation: 'Phase 5: Attempting exploitation (Metasploit)...',
+  reporting: 'Generating penetration test report...',
+  complete: 'Scan complete!',
+};
+
+const PHASE_ORDER = ['discovery','enumeration','vulnscan','credtest','exploitation','reporting'];
+
+let currentCaseId = null;
+let eventSource = null;
+
+// Auto-detect subnet on load
+fetch('/api/detect-network')
+  .then(r => r.json())
+  .then(d => {
+    if (d.subnet) {
+      document.getElementById('subnet').value = d.subnet;
+      document.getElementById('subnet-hint').textContent = `Detected: ${d.local_ip} on ${d.subnet}`;
+    } else {
+      document.getElementById('subnet-hint').textContent = 'Could not auto-detect — enter manually';
+    }
+  }).catch(() => {
+    document.getElementById('subnet-hint').textContent = 'Could not auto-detect — enter manually';
+  });
+
+// Check localStorage for active scan
+window.addEventListener('load', () => {
+  const saved = localStorage.getItem('apt_active_scan');
+  if (saved) {
+    try {
+      const {caseId, status} = JSON.parse(saved);
+      if (caseId) {
+        if (status === 'complete') {
+          showActiveBanner(caseId, status);
+        } else {
+          // Reconnect to running scan
+          currentCaseId = caseId;
+          showScanProgress(caseId);
+          subscribeStream(caseId);
+        }
+      }
+    } catch(e) {
+      localStorage.removeItem('apt_active_scan');
+    }
+  }
+});
+
+function showActiveBanner(caseId, status) {
+  const banner = document.getElementById('active-banner');
+  banner.style.display = 'flex';
+  document.getElementById('banner-case-id').textContent = caseId;
+  document.getElementById('banner-status').textContent = status === 'complete' ? 'Scan complete' : 'In progress';
+  if (status === 'complete') {
+    const link = document.getElementById('banner-report-link');
+    link.href = `/report/${caseId}`;
+    link.style.display = 'inline-flex';
+  }
+}
+
+function clearActiveScan() {
+  localStorage.removeItem('apt_active_scan');
+  document.getElementById('active-banner').style.display = 'none';
+}
+
+async function startScan() {
+  const subnet = document.getElementById('subnet').value.trim();
+  const authorizedBy = document.getElementById('authorized_by').value.trim();
+  const authNotes = document.getElementById('authorization_notes').value.trim();
+  const aggression = document.querySelector('input[name="aggression"]:checked')?.value || 'normal';
+  const skipPing = document.getElementById('skip_ping').checked;
+  const confirmed = document.getElementById('auth-confirm').checked;
+
+  if (!confirmed) {
+    alert('You must confirm authorization before starting a scan.');
+    return;
+  }
+  if (!subnet) {
+    alert('Please enter a target subnet.');
+    return;
+  }
+  if (!authorizedBy) {
+    alert('Please enter the name of the authorizing party.');
+    return;
+  }
+
+  const btn = document.getElementById('start-btn');
+  btn.disabled = true;
+  btn.textContent = 'Starting...';
+
+  try {
+    const resp = await fetch('/api/scan/start', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({
+        subnet,
+        authorized_by: authorizedBy,
+        authorization_notes: authNotes,
+        aggression,
+        skip_ping: skipPing,
+        enable_creds: aggression !== 'passive',
+        enable_exploit: aggression === 'aggressive',
+      })
+    });
+    const data = await resp.json();
+    if (data.error) {
+      alert('Error: ' + data.error);
+      btn.disabled = false;
+      btn.textContent = 'Start Automated Penetration Test';
+      return;
+    }
+
+    currentCaseId = data.case_id;
+    localStorage.setItem('apt_active_scan', JSON.stringify({caseId: currentCaseId, status: 'running'}));
+    showScanProgress(currentCaseId);
+    subscribeStream(currentCaseId);
+
+  } catch(err) {
+    alert('Failed to start scan: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = 'Start Automated Penetration Test';
+  }
+}
+
+function showScanProgress(caseId) {
+  document.getElementById('scan-form-wrap').style.display = 'none';
+  document.getElementById('scan-progress-wrap').style.display = 'block';
+  document.getElementById('scan-complete-wrap').style.display = 'none';
+  document.getElementById('progress-case-id').textContent = caseId;
+}
+
+function subscribeStream(caseId) {
+  if (eventSource) { eventSource.close(); }
+  eventSource = new EventSource(`/api/scan/${caseId}/stream`);
+
+  eventSource.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+
+    if (data.type === 'log') {
+      appendLog(data.msg, data.level);
+    }
+
+    if (data.type === 'status') {
+      updatePhase(data.status, data.progress);
+    }
+
+    if (data.type === 'done') {
+      eventSource.close();
+      eventSource = null;
+      if (data.status === 'complete') {
+        onScanComplete(caseId);
+      } else {
+        onScanError(data.status);
+      }
+    }
+  };
+
+  eventSource.onerror = function() {
+    appendLog('Connection to scan lost — check server status', 'error');
+  };
+}
+
+function updatePhase(status, progress) {
+  const label = PHASE_LABELS[status] || status;
+  document.getElementById('phase-label').textContent = label;
+  document.getElementById('progress-fill').style.width = progress + '%';
+  document.getElementById('progress-pct').textContent = progress + '%';
+
+  // Update phase chips
+  const idx = PHASE_ORDER.indexOf(status);
+  PHASE_ORDER.forEach((phase, i) => {
+    const chip = document.getElementById('chip-' + phase);
+    if (!chip) return;
+    if (i < idx) {
+      chip.className = 'phase-chip done';
+    } else if (i === idx) {
+      chip.className = 'phase-chip active';
+    } else {
+      chip.className = 'phase-chip';
+    }
+  });
+}
+
+function appendLog(msg, level) {
+  const log = document.getElementById('scan-log');
+  const line = document.createElement('div');
+  line.className = 'log-line log-' + (level || 'info');
+  const time = new Date().toLocaleTimeString();
+  line.textContent = `[${time}] ${msg}`;
+  log.appendChild(line);
+  log.scrollTop = log.scrollHeight;
+}
+
+async function onScanComplete(caseId) {
+  // Mark all chips done
+  PHASE_ORDER.forEach(p => {
+    const chip = document.getElementById('chip-' + p);
+    if (chip) chip.className = 'phase-chip done';
+  });
+  document.getElementById('progress-fill').style.width = '100%';
+  document.getElementById('progress-pct').textContent = '100%';
+
+  localStorage.setItem('apt_active_scan', JSON.stringify({caseId, status: 'complete'}));
+
+  // Get risk rating for completion message
+  try {
+    const status = await fetch(`/api/scan/${caseId}/status`).then(r => r.json());
+    const f = status.findings || {};
+    const rating = f.risk_rating || 'Unknown';
+    const score = f.risk_score || 0;
+    const ratingColors = {Critical: 'var(--accent-red)', High: 'var(--accent-orange)', Medium: 'var(--accent-yellow)', Low: 'var(--accent-green)'};
+
+    document.getElementById('scan-progress-wrap').style.display = 'none';
+    document.getElementById('scan-complete-wrap').style.display = 'block';
+    document.getElementById('complete-icon').style.color = ratingColors[rating] || 'var(--accent-green)';
+    document.getElementById('complete-title').textContent = `Scan Complete — Risk: ${rating}`;
+    document.getElementById('complete-subtitle').textContent =
+      `Score: ${score}/100 · ${f.hosts_discovered || 0} hosts · ${(f.critical_vulns||0) + (f.high_vulns||0)} high/critical findings`;
+    document.getElementById('view-report-btn').href = `/report/${caseId}`;
+  } catch(e) {
+    document.getElementById('scan-progress-wrap').style.display = 'none';
+    document.getElementById('scan-complete-wrap').style.display = 'block';
+    document.getElementById('view-report-btn').href = `/report/${caseId}`;
+  }
+}
+
+function onScanError(status) {
+  appendLog(`Scan ended with status: ${status}`, 'error');
+  document.getElementById('phase-label').textContent = 'Scan failed — see log above';
+}
+
+function cancelScan() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  localStorage.removeItem('apt_active_scan');
+  currentCaseId = null;
+  startNewScan();
+}
+
+function startNewScan() {
+  document.getElementById('scan-form-wrap').style.display = 'block';
+  document.getElementById('scan-progress-wrap').style.display = 'none';
+  document.getElementById('scan-complete-wrap').style.display = 'none';
+  document.getElementById('start-btn').disabled = false;
+  document.getElementById('start-btn').textContent = 'Start Automated Penetration Test';
+  document.getElementById('auth-confirm').checked = false;
+  document.getElementById('scan-log').innerHTML = '';
+  PHASE_ORDER.forEach(p => {
+    const chip = document.getElementById('chip-' + p);
+    if (chip) chip.className = 'phase-chip';
+  });
+}
+</script>
+{% endblock %}

@@ -1,0 +1,19 @@
+[Unit]
+Description=APT — Automated Penetration Toolkit GUI
+After=network.target
+
+[Service]
+Type=simple
+User=root
+WorkingDirectory=/opt/apt
+ExecStart=/opt/apt/venv/bin/python -m apt.web.launcher
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+Environment=APT_PORT=5001
+Environment=APT_HOST=0.0.0.0
+Environment=APT_WORKERS=2
+
+[Install]
+WantedBy=multi-user.target

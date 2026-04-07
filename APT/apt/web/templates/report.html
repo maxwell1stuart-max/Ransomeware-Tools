@@ -1,0 +1,254 @@
+{% extends "base.html" %}
+{% block title %}Report {{ case_id }} — APT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>Penetration Test Report</h1>
+    <p class="subtitle mono">{{ case_id }}</p>
+  </div>
+  <div class="header-actions" id="download-btns" style="display:none;">
+    <a href="/api/case/{{ case_id }}/download/txt" class="btn btn-ghost">Download TXT</a>
+    <a href="/api/case/{{ case_id }}/download/json" class="btn btn-ghost">Download JSON</a>
+    <a href="/api/case/{{ case_id }}/download/pdf" class="btn btn-primary">Download PDF</a>
+  </div>
+</div>
+
+<div id="report-loading" class="empty-state">
+  <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 1rem;"></div>
+  <p>Loading report...</p>
+</div>
+
+<div id="report-body" style="display:none;">
+
+  <!-- Risk gauge + headline numbers -->
+  <div class="card" style="margin-bottom:1.25rem;">
+    <div class="risk-gauge-wrap">
+      <div class="risk-gauge" id="risk-gauge">
+        <span class="risk-score-num" id="risk-score-num">—</span>
+        <span class="risk-score-label">/ 100</span>
+      </div>
+      <div>
+        <div style="font-size:1.4rem;font-weight:700;" id="risk-rating-label">—</div>
+        <div style="color:var(--text-muted);font-size:0.875rem;margin-bottom:0.75rem;" id="report-meta"></div>
+        <div class="risk-stats" id="risk-stats"></div>
+      </div>
+    </div>
+  </div>
+
+  <div class="tab-bar">
+    <button class="tab-btn active" onclick="showTab('summary')">Executive Summary</button>
+    <button class="tab-btn" onclick="showTab('hosts')">Network Map</button>
+    <button class="tab-btn" onclick="showTab('vulns')">Vulnerabilities</button>
+    <button class="tab-btn" onclick="showTab('creds')">Credentials</button>
+    <button class="tab-btn" onclick="showTab('exploits')">Exploitation</button>
+    <button class="tab-btn" onclick="showTab('recs')">Recommendations</button>
+  </div>
+
+  <div class="tab-panel" id="tab-summary">
+    <div id="summary-section"></div>
+  </div>
+  <div class="tab-panel hidden" id="tab-hosts">
+    <div id="hosts-section"></div>
+  </div>
+  <div class="tab-panel hidden" id="tab-vulns">
+    <div id="vulns-section"></div>
+  </div>
+  <div class="tab-panel hidden" id="tab-creds">
+    <div id="creds-section"></div>
+  </div>
+  <div class="tab-panel hidden" id="tab-exploits">
+    <div id="exploits-section"></div>
+  </div>
+  <div class="tab-panel hidden" id="tab-recs">
+    <div id="recs-section"></div>
+  </div>
+
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const CASE_ID = '{{ case_id }}';
+
+function showTab(name) {
+  const tabs = ['summary','hosts','vulns','creds','exploits','recs'];
+  document.querySelectorAll('.tab-btn').forEach((b, i) => b.classList.toggle('active', tabs[i] === name));
+  document.querySelectorAll('.tab-panel').forEach(p => p.classList.toggle('hidden', !p.id.endsWith(name)));
+}
+
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+function fmtDate(iso) { try { return new Date(iso).toLocaleString(); } catch { return iso||''; } }
+
+const SEV_COLOR = {critical:'var(--accent-red)',high:'var(--accent-orange)',medium:'var(--accent-yellow)',low:'var(--accent-green)',info:'var(--text-muted)'};
+const RISK_COLOR = {Critical:'var(--accent-red)',High:'var(--accent-orange)',Medium:'var(--accent-yellow)',Low:'var(--accent-green)'};
+
+async function loadReport() {
+  const status = await fetch(`/api/scan/${CASE_ID}/status`).then(r => r.json()).catch(() => null);
+  if (!status || !status.findings) {
+    document.getElementById('report-loading').innerHTML = '<p>Report not available. <a href="/cases">Back to engagements</a></p>';
+    return;
+  }
+
+  document.getElementById('report-loading').style.display = 'none';
+  document.getElementById('report-body').style.display = 'block';
+  document.getElementById('download-btns').style.display = 'flex';
+
+  const f = status.findings;
+  const rating = f.risk_rating || 'Low';
+  const score = f.risk_score || 0;
+  const ratingColor = RISK_COLOR[rating] || 'var(--accent-green)';
+
+  // Risk gauge
+  const gauge = document.getElementById('risk-gauge');
+  gauge.classList.add(rating.toLowerCase());
+  document.getElementById('risk-score-num').textContent = score;
+  document.getElementById('risk-score-num').style.color = ratingColor;
+  document.getElementById('risk-rating-label').textContent = rating + ' Risk';
+  document.getElementById('risk-rating-label').style.color = ratingColor;
+  document.getElementById('report-meta').textContent =
+    `Scope: ${esc(f.subnet||'N/A')} · Authorized by: ${esc(f.authorized_by||'N/A')}`;
+
+  document.getElementById('risk-stats').innerHTML = [
+    ['Hosts Found', f.hosts_discovered||0, 'var(--accent-blue)'],
+    ['Vulnerable', f.hosts_vulnerable||0, 'var(--accent-orange)'],
+    ['Critical CVEs', f.critical_vulns||0, 'var(--accent-red)'],
+    ['High CVEs', f.high_vulns||0, 'var(--accent-orange)'],
+    ['Credentials', f.credentials_found||0, 'var(--accent-yellow)'],
+    ['Compromised', f.systems_compromised||0, 'var(--accent-red)'],
+  ].map(([label, val, color]) => `
+    <div class="risk-stat">
+      <div class="risk-stat-num" style="color:${color};">${val}</div>
+      <div class="risk-stat-label">${label}</div>
+    </div>
+  `).join('');
+
+  // Summary tab
+  const phases = (f.phases_completed||[]).join(' → ');
+  document.getElementById('summary-section').innerHTML = `
+    <div class="card">
+      <div class="card-header"><h2>Scan Summary</h2></div>
+      <div class="form-grid">
+        <div><div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Phases Completed</div><div>${esc(phases)||'—'}</div></div>
+        <div><div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Total Vulnerabilities</div><div>${(f.critical_vulns||0)+(f.high_vulns||0)+(f.medium_vulns||0)+(f.low_vulns||0)}</div></div>
+        <div><div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Critical</div><div style="color:var(--accent-red);">${f.critical_vulns||0}</div></div>
+        <div><div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">High</div><div style="color:var(--accent-orange);">${f.high_vulns||0}</div></div>
+        <div><div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Medium</div><div style="color:var(--accent-yellow);">${f.medium_vulns||0}</div></div>
+        <div><div style="color:var(--text-muted);font-size:0.8rem;margin-bottom:4px;">Low</div><div style="color:var(--accent-green);">${f.low_vulns||0}</div></div>
+      </div>
+    </div>
+    ${(f.critical_recommendations||[]).length ? `
+    <div class="card" style="border-color:var(--accent-red);">
+      <div class="card-header"><h2 style="color:var(--accent-red);">Critical Actions Required</h2></div>
+      <ol style="padding-left:1.25rem;line-height:2;">
+        ${(f.critical_recommendations||[]).map(r => `<li>${esc(r)}</li>`).join('')}
+      </ol>
+    </div>` : ''}
+  `;
+
+  // Hosts tab
+  const hosts = f.hosts || [];
+  document.getElementById('hosts-section').innerHTML = hosts.length ? `
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr><th>IP</th><th>Hostname</th><th>OS</th><th>Services</th><th>Vulns</th><th>Risk</th></tr></thead>
+        <tbody>
+          ${hosts.map(h => `<tr>
+            <td class="mono">${esc(h.ip)}</td>
+            <td>${esc(h.hostname||'—')}</td>
+            <td style="font-size:0.8rem;">${esc(h.os||'Unknown')}</td>
+            <td style="font-size:0.8rem;">${(h.services||[]).slice(0,5).map(s => `<span class="badge badge-gray">${s.port}/${s.service}</span>`).join(' ')}</td>
+            <td>${h.vuln_count||0}</td>
+            <td><span class="risk-dot ${h.risk||'low'}"></span>${(h.risk||'low').toUpperCase()}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : '<p class="empty-text" style="padding:2rem;text-align:center;color:var(--text-muted);">No hosts discovered.</p>';
+
+  // Vulns tab
+  const vulns = f.vulnerabilities || [];
+  document.getElementById('vulns-section').innerHTML = vulns.length ? `
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr><th>Severity</th><th>CVE</th><th>Title</th><th>Host</th><th>CVSS</th><th>Remediation</th></tr></thead>
+        <tbody>
+          ${vulns.map(v => `<tr class="sev-${v.severity}">
+            <td><span class="badge badge-${v.severity === 'critical' ? 'red' : v.severity === 'high' ? 'orange' : v.severity === 'medium' ? 'yellow' : 'green'}">${v.severity}</span></td>
+            <td class="mono" style="font-size:0.8rem;">${esc(v.cve_id)}</td>
+            <td style="font-size:0.85rem;">${esc(v.title)}</td>
+            <td class="mono" style="font-size:0.8rem;">${esc(v.affected_ip)}:${v.port}</td>
+            <td style="color:${SEV_COLOR[v.severity]};font-weight:600;">${v.cvss_score}</td>
+            <td style="font-size:0.8rem;color:var(--text-muted);">${esc(v.remediation||'').slice(0,80)}...</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : '<p style="padding:2rem;text-align:center;color:var(--accent-green);">No vulnerabilities found.</p>';
+
+  // Creds tab
+  const creds = f.credential_findings || [];
+  document.getElementById('creds-section').innerHTML = creds.length ? `
+    <div style="padding:0.5rem 0 1rem;color:var(--accent-red);font-size:0.875rem;">
+      ⚠ ${creds.length} valid credential pair(s) confirmed. Change immediately.
+    </div>
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr><th>Service</th><th>Host</th><th>Port</th><th>Username</th><th>Password</th><th>Access</th></tr></thead>
+        <tbody>
+          ${creds.map(c => `<tr>
+            <td><span class="badge badge-blue">${esc(c.service)}</span></td>
+            <td class="mono">${esc(c.ip)}</td>
+            <td>${c.port}</td>
+            <td class="mono">${esc(c.username)}</td>
+            <td class="mono">${esc(c.password)}</td>
+            <td><span class="badge badge-${c.access_level==='admin'?'red':'yellow'}">${esc(c.access_level)}</span></td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : '<p style="padding:2rem;text-align:center;color:var(--accent-green);">No default credentials found.</p>';
+
+  // Exploits tab
+  const exploits = f.exploit_results || [];
+  document.getElementById('exploits-section').innerHTML = exploits.length ? `
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr><th>Result</th><th>Host</th><th>CVE</th><th>Module</th><th>Access</th><th>Proof</th></tr></thead>
+        <tbody>
+          ${exploits.map(e => `<tr>
+            <td><span class="badge badge-${e.success?'red':'gray'}">${e.success?'COMPROMISED':'Failed'}</span></td>
+            <td class="mono">${esc(e.ip)}</td>
+            <td class="mono" style="font-size:0.8rem;">${esc(e.cve_id)}</td>
+            <td style="font-size:0.75rem;color:var(--text-muted);">${esc(e.module)}</td>
+            <td>${esc(e.access_level||e.error||'—')}</td>
+            <td>${e.proof ? `<details><summary style="cursor:pointer;font-size:0.8rem;">Show proof</summary><div class="proof-block">${esc(e.proof)}</div></details>` : '—'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  ` : '<p style="padding:2rem;text-align:center;color:var(--text-muted);">No exploitation attempted or no successful exploits.</p>';
+
+  // Recs tab
+  const critRecs = f.critical_recommendations || [];
+  const genRecs = f.general_recommendations || [];
+  document.getElementById('recs-section').innerHTML = `
+    ${critRecs.length ? `
+    <div class="card" style="border-color:var(--accent-red);margin-bottom:1rem;">
+      <div class="card-header"><h2 style="color:var(--accent-red);">Critical — Act Immediately</h2></div>
+      <ol style="padding-left:1.25rem;line-height:2.2;">
+        ${critRecs.map(r => `<li>${esc(r)}</li>`).join('')}
+      </ol>
+    </div>` : ''}
+    <div class="card">
+      <div class="card-header"><h2>General Hardening Recommendations</h2></div>
+      <ol style="padding-left:1.25rem;line-height:2.2;">
+        ${genRecs.map(r => `<li>${esc(r)}</li>`).join('')}
+      </ol>
+    </div>
+  `;
+}
+
+loadReport();
+</script>
+{% endblock %}

@@ -1,0 +1,80 @@
+{% extends "base.html" %}
+{% block title %}Engagements — APT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <h1>Engagements</h1>
+  <a href="/scan" class="btn btn-primary">+ New Scan</a>
+</div>
+
+<div id="cases-container">
+  <div class="empty-state">
+    <div class="spinner" style="width:32px;height:32px;border-width:3px;margin:0 auto 1rem;"></div>
+    <p>Loading...</p>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+const RISK_COLOR = {Critical:'var(--accent-red)',High:'var(--accent-orange)',Medium:'var(--accent-yellow)',Low:'var(--accent-green)'};
+
+async function loadCases() {
+  const resp = await fetch('/api/cases').then(r => r.json()).catch(() => ({cases:[]}));
+  const cases = resp.cases || [];
+  const el = document.getElementById('cases-container');
+
+  if (!cases.length) {
+    el.innerHTML = `<div class="empty-state">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <p>No engagements yet. <a href="/scan" style="color:var(--accent-blue);">Start a scan</a></p>
+    </div>`;
+    return;
+  }
+
+  el.innerHTML = `
+    <div style="margin-bottom:0.75rem;color:var(--text-muted);font-size:0.85rem;">
+      ${cases.length} engagement record${cases.length!==1?'s':''} — persisted across restarts
+    </div>
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr>
+          <th>Case ID</th><th>Subnet / Scope</th><th>Authorized By</th>
+          <th>Risk</th><th>Hosts</th><th>Critical</th><th>Creds</th>
+          <th>Status</th><th>Started</th><th>Completed</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${cases.map(c => `<tr>
+            <td class="mono" style="font-size:0.78rem;">${esc(c.case_id)}</td>
+            <td class="mono" style="font-size:0.8rem;">${esc(c.subnet||'—')}</td>
+            <td style="font-size:0.85rem;">${esc(c.authorized_by||'—')}</td>
+            <td>${c.risk_rating
+              ? `<span style="color:${RISK_COLOR[c.risk_rating]||'inherit'};font-weight:600;">${esc(c.risk_rating)}</span> <span style="color:var(--text-muted);font-size:0.8rem;">(${c.risk_score})</span>`
+              : '—'}</td>
+            <td>${c.hosts_discovered||'—'}</td>
+            <td style="color:var(--accent-red);font-weight:${c.critical_vulns?'600':'400'};">${c.critical_vulns||0}</td>
+            <td style="color:var(--accent-yellow);">${c.credentials_found||0}</td>
+            <td><span class="badge badge-${statusColor(c.status)}">${esc(c.status)}</span></td>
+            <td style="font-size:0.78rem;">${fmtDate(c.started_at)}</td>
+            <td style="font-size:0.78rem;">${c.completed_at ? fmtDate(c.completed_at) : '—'}</td>
+            <td>${c.has_report
+              ? `<a href="/report/${esc(c.case_id)}" class="btn btn-ghost btn-sm">Report</a>`
+              : '<span style="color:var(--text-muted);font-size:0.8rem;">—</span>'}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function statusColor(s) {
+  return {complete:'green',error:'red',interrupted:'red',
+          discovery:'blue',enumeration:'blue',vulnscan:'blue',
+          credtest:'blue',exploitation:'blue',reporting:'blue'}[s] || 'gray';
+}
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+loadCases();
+</script>
+{% endblock %}

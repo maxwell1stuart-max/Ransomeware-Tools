@@ -1,0 +1,118 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — APT{% endblock %}
+{% block content %}
+
+<div class="page-header">
+  <div>
+    <h1>APT Dashboard</h1>
+    <p class="subtitle">Automated Penetration Toolkit — plug in, scan, report</p>
+  </div>
+  <a href="/scan" class="btn btn-primary">+ New Scan</a>
+</div>
+
+<div id="active-scan-card" style="display:none;" class="card" style="border-color:var(--accent-blue);">
+  <div style="display:flex;justify-content:space-between;align-items:center;">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div class="spinner"></div>
+      <div>
+        <div style="font-weight:600;">Scan In Progress</div>
+        <div id="active-scan-id" style="font-family:monospace;font-size:0.8rem;color:var(--accent-blue);"></div>
+      </div>
+    </div>
+    <a href="/scan" class="btn btn-primary btn-sm">View Progress</a>
+  </div>
+</div>
+
+<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:1rem;margin-bottom:1.5rem;" id="stat-cards">
+  <div class="card" style="text-align:center;padding:1.25rem;">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent-blue);" id="stat-total">—</div>
+    <div style="font-size:0.8rem;color:var(--text-muted);">Total Scans</div>
+  </div>
+  <div class="card" style="text-align:center;padding:1.25rem;">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent-red);" id="stat-critical">—</div>
+    <div style="font-size:0.8rem;color:var(--text-muted);">Critical Findings</div>
+  </div>
+  <div class="card" style="text-align:center;padding:1.25rem;">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent-yellow);" id="stat-creds">—</div>
+    <div style="font-size:0.8rem;color:var(--text-muted);">Credentials Found</div>
+  </div>
+  <div class="card" style="text-align:center;padding:1.25rem;">
+    <div style="font-size:2rem;font-weight:700;color:var(--accent-orange);" id="stat-compromised">—</div>
+    <div style="font-size:0.8rem;color:var(--text-muted);">Systems Compromised</div>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-header"><h2>Recent Engagements</h2></div>
+  <div id="recent-cases">
+    <div class="empty-state">
+      <svg viewBox="0 0 24 24"><path d="M22 19a2 2 0 01-2 2H4a2 2 0 01-2-2V5a2 2 0 012-2h5l2 3h9a2 2 0 012 2z"/></svg>
+      <p>No scans yet. <a href="/scan" style="color:var(--accent-blue);">Start your first scan</a></p>
+    </div>
+  </div>
+</div>
+
+{% endblock %}
+{% block scripts %}
+<script>
+async function loadDashboard() {
+  const resp = await fetch('/api/cases').then(r => r.json()).catch(() => ({cases:[]}));
+  const cases = resp.cases || [];
+
+  // Stats
+  document.getElementById('stat-total').textContent = cases.length;
+  document.getElementById('stat-critical').textContent =
+    cases.reduce((s, c) => s + (c.critical_vulns || 0), 0);
+  document.getElementById('stat-creds').textContent =
+    cases.reduce((s, c) => s + (c.credentials_found || 0), 0);
+  document.getElementById('stat-compromised').textContent =
+    cases.reduce((s, c) => s + ((c.systems_compromised || 0)), 0);
+
+  // Active scan
+  const active = cases.find(c => !['complete','error','interrupted'].includes(c.status));
+  if (active) {
+    document.getElementById('active-scan-card').style.display = 'block';
+    document.getElementById('active-scan-id').textContent = active.case_id;
+  }
+
+  if (!cases.length) return;
+
+  const recent = cases.slice(0, 8);
+  const ratingColor = {Critical:'var(--accent-red)',High:'var(--accent-orange)',Medium:'var(--accent-yellow)',Low:'var(--accent-green)'};
+
+  document.getElementById('recent-cases').innerHTML = `
+    <div class="table-container">
+      <table class="data-table">
+        <thead><tr>
+          <th>Case ID</th><th>Subnet</th><th>Risk</th><th>Hosts</th>
+          <th>Critical</th><th>Creds</th><th>Status</th><th>Date</th><th></th>
+        </tr></thead>
+        <tbody>
+          ${recent.map(c => `<tr>
+            <td class="mono" style="font-size:0.8rem;">${esc(c.case_id)}</td>
+            <td class="mono" style="font-size:0.8rem;">${esc(c.subnet||'—')}</td>
+            <td>${c.risk_rating ? `<span style="color:${ratingColor[c.risk_rating]||'inherit'};font-weight:600;">${esc(c.risk_rating)}</span>` : '—'}</td>
+            <td>${c.hosts_discovered||'—'}</td>
+            <td style="color:var(--accent-red);">${c.critical_vulns||0}</td>
+            <td style="color:var(--accent-yellow);">${c.credentials_found||0}</td>
+            <td><span class="badge badge-${statusColor(c.status)}">${esc(c.status)}</span></td>
+            <td style="font-size:0.8rem;">${fmtDate(c.started_at)}</td>
+            <td>${c.has_report ? `<a href="/report/${esc(c.case_id)}" class="btn btn-ghost btn-sm">Report</a>` : ''}</td>
+          </tr>`).join('')}
+        </tbody>
+      </table>
+    </div>
+  `;
+}
+
+function statusColor(s) {
+  return {complete:'green',error:'red',interrupted:'red',
+          discovery:'blue',enumeration:'blue',vulnscan:'blue',
+          credtest:'blue',exploitation:'blue',reporting:'blue'}[s] || 'gray';
+}
+function fmtDate(iso) { return iso ? new Date(iso).toLocaleString() : '—'; }
+function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+
+loadDashboard();
+</script>
+{% endblock %}
