@@ -134,7 +134,10 @@
 
 <!-- Step 3: Progress -->
 <div class="wizard-panel hidden" id="panel-3">
-  <h2>Analysis in Progress</h2>
+  <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
+    <h2>Analysis in Progress</h2>
+    <button class="btn btn-ghost btn-sm" onclick="cancelAnalysis()">✕ Cancel &amp; Start Over</button>
+  </div>
   <p class="subtitle">Do not remove the drive. This may take several minutes.</p>
 
   <div class="progress-section">
@@ -408,7 +411,13 @@ async function init() {
   const savedCase = localStorage.getItem('rft_active_case');
   if (savedCase) {
     const status = await fetch(`/api/case/${savedCase}/status`).then(r => r.json()).catch(() => null);
-    if (status && status.status !== 'complete' && status.status !== 'error') {
+    if (!status || status.error) {
+      // Server restarted — case is gone, clear and show drive selection
+      localStorage.removeItem('rft_active_case');
+      refreshDrives();
+      return;
+    }
+    if (status.status !== 'complete' && status.status !== 'error') {
       // Analysis is still running — jump straight back to the progress panel
       currentCaseId = savedCase;
       showActiveBanner(savedCase, status.status);
@@ -448,6 +457,18 @@ function showActiveBanner(caseId, status) {
 function clearActiveCase() {
   localStorage.removeItem('rft_active_case');
   location.reload();
+}
+
+function cancelAnalysis() {
+  if (sseSource) { sseSource.close(); sseSource = null; }
+  localStorage.removeItem('rft_active_case');
+  currentCaseId = null;
+  selectedDevice = null;
+  document.getElementById('log-entries').innerHTML = '';
+  document.getElementById('progress-bar').style.width = '0%';
+  document.getElementById('progress-label').textContent = 'Starting...';
+  goToStep(1);
+  refreshDrives();
 }
 
 function replayLogs(logs) {
