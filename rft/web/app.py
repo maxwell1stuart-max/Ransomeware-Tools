@@ -48,6 +48,9 @@ def _load_cases() -> dict:
                 default_report = OUTPUT_DIR / cid / "fbi_report.txt"
                 if report_on_disk or default_report.exists():
                     c["status"] = "complete"
+                    # Rebuild findings from saved report JSON if missing
+                    if not c.get("findings"):
+                        c["findings"] = _rebuild_findings_from_disk(cid)
                 elif c.get("status") in _IN_PROGRESS_STATUSES:
                     c["status"] = "interrupted"
                     c["error"] = "Service restarted while analysis was running"
@@ -78,6 +81,49 @@ def _save_cases():
     except Exception as e:
         import logging
         logging.getLogger(__name__).warning(f"Failed to save cases index: {e}")
+
+
+def _rebuild_findings_from_disk(case_id: str) -> dict:
+    """Reconstruct the findings dict from the saved fbi_report.json on disk."""
+    report_path = OUTPUT_DIR / case_id / "fbi_report.json"
+    if not report_path.exists():
+        return {}
+    try:
+        r = json.loads(report_path.read_text())
+        return {
+            "family": r.get("ransomware_name", "Unknown"),
+            "attack_vector": r.get("attack_vector", "unknown"),
+            "encrypted_count": r.get("files_encrypted", 0),
+            "ransom_notes": [],
+            "iocs": {
+                "bitcoin": r.get("bitcoin_addresses", []),
+                "monero": r.get("monero_addresses", []),
+                "tor": r.get("onion_addresses", []),
+                "emails": r.get("contact_emails", []),
+                "ips": r.get("attacker_ip_addresses", []),
+            },
+            "mitre_techniques": r.get("mitre_techniques", []),
+            "timeline": [],
+            "ai_summary": r.get("ai_analysis_summary", ""),
+            "critical_facts": [],
+            "recovery_feasibility": "Unknown",
+            "recommendations": [],
+            "report_txt": str(OUTPUT_DIR / case_id / "fbi_report.txt"),
+            "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
+            "report_pdf": str(OUTPUT_DIR / case_id / "fbi_report.pdf")
+                          if (OUTPUT_DIR / case_id / "fbi_report.pdf").exists() else None,
+            "ransom_note_excerpt": r.get("ransom_note_excerpt", ""),
+            "ransomware_confidence": r.get("ransomware_confidence", ""),
+            "data_exfiltrated": r.get("data_exfiltrated", False),
+            "data_exfil_description": r.get("data_exfil_description", ""),
+            "encryption_date": r.get("encryption_date", ""),
+            "attack_vector_description": r.get("attack_vector_description", ""),
+        }
+    except Exception:
+        return {
+            "report_txt": str(OUTPUT_DIR / case_id / "fbi_report.txt"),
+            "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
+        }
 
 
 # Load any previously saved cases on startup
