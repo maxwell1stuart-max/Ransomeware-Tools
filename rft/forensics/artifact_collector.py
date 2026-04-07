@@ -126,6 +126,7 @@ class CollectionResult:
     other_artifacts: list[Artifact] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     stats: dict = field(default_factory=dict)
+    total_encrypted_count: int = 0   # actual total found, may exceed len(encrypted_files) sample
 
 
 def collect_artifacts(
@@ -189,21 +190,23 @@ def collect_artifacts(
                 if artifact:
                     result.suspicious_scripts.append(artifact)
 
-            # Check for encrypted files
-            if encrypted_count < max_encrypted_samples:
-                if _is_encrypted_file(file_path, deep_scan):
+            # Check for encrypted files (sample up to max, but count all)
+            if _is_encrypted_file(file_path, deep_scan):
+                encrypted_count += 1
+                if encrypted_count <= max_encrypted_samples:
                     artifact = _make_artifact(file_path, rel_path, "encrypted_file")
                     if artifact:
                         result.encrypted_files.append(artifact)
-                        encrypted_count += 1
 
         except (PermissionError, OSError) as e:
             result.errors.append(f"Cannot access {file_path}: {e}")
 
+    result.total_encrypted_count = encrypted_count
     result.stats = {
         "total_files_scanned": total_files,
         "ransom_notes_found": len(result.ransom_notes),
         "encrypted_files_sampled": len(result.encrypted_files),
+        "encrypted_files_total": encrypted_count,
         "event_logs_found": len(result.event_logs),
         "registry_hives_found": len(result.registry_hives),
         "suspicious_scripts": len(result.suspicious_scripts),

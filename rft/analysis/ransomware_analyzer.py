@@ -244,7 +244,7 @@ def analyze_ransomware_incident(
         ransom_amount_btc=ransom_btc,
         ransom_amount_usd=ransom_usd,
         payment_deadline=deadline,
-        estimated_files_encrypted=len(collection.encrypted_files),
+        estimated_files_encrypted=collection.total_encrypted_count or len(collection.encrypted_files),
         systems_affected=affected_systems,
         recovery_recommendations=recommendations,
         fbi_reporting_recommended=True,  # Always recommend FBI reporting
@@ -470,6 +470,16 @@ def _detect_variant(note_text: str, family: Optional[str]) -> Optional[str]:
         "ALPHV/BlackCat": {
             "ALPHV v2": r"(?i)noescapevm",
             "BlackCat": r"(?i)blackcat",
+        },
+        "Akira": {
+            "Akira v1 (.akira)": r"\.akira\b",
+            "Akira v2 (.arika)": r"\.arika\b",
+        },
+        "BlackBasta": {
+            "Black Basta": r"(?i)black\s*basta",
+        },
+        "Cl0p": {
+            "Cl0p": r"(?i)cl0p|clop",
         },
     }
     family_variants = variant_patterns.get(family, {})

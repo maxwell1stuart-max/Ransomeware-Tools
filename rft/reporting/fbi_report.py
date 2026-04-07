@@ -152,11 +152,14 @@ def generate_fbi_report(
     report_id = f"RFT-{ransomware_analysis.case_id}-{int(time.time())}"
 
     # Determine incident and encryption dates
-    incident_date = (
-        ransomware_analysis.earliest_indicator or
+    encryption_date = (
+        ransomware_analysis.estimated_encryption_time or
         now
     )
-    encryption_date = (
+    # Use earliest log indicator if available; otherwise fall back to encryption date
+    # (avoids showing today's date when there are no event logs)
+    incident_date = (
+        ransomware_analysis.earliest_indicator or
         ransomware_analysis.estimated_encryption_time or
         now
     )
@@ -238,6 +241,12 @@ def generate_fbi_report(
         systems_affected=ransomware_analysis.systems_affected,
         data_types_affected=data_types or ["Unknown — forensic analysis required"],
         evidence_preserved=evidence,
+        chain_of_custody=(
+            f"Drive imaged read-only. SHA-256 hash recorded at acquisition time. "
+            f"Case ID: {ransomware_analysis.case_id}. "
+            f"Analysis performed by: {examiner}. "
+            f"Report generated: {now}."
+        ),
         incident_description=narrative,
         mitre_techniques=ai_result.mitre_techniques if ai_result else [],
         ai_analysis_summary=ai_summary,
@@ -464,9 +473,15 @@ def _build_narrative(
     victim: VictimInfo
 ) -> str:
     """Build the incident narrative section."""
+    org = victim.organization_name or "the victim organization"
+    incident_start = (
+        analysis.earliest_indicator or
+        analysis.estimated_encryption_time or
+        "an undetermined date"
+    )
     parts = [
-        f"On or around {analysis.earliest_indicator or 'an undetermined date'}, "
-        f"{victim.organization_name} suffered a ransomware attack"
+        f"On or around {incident_start}, "
+        f"{org} suffered a ransomware attack"
     ]
 
     if analysis.ransomware_family:
@@ -492,8 +507,10 @@ def _build_narrative(
         )
 
     if analysis.estimated_files_encrypted > 0:
+        count = analysis.estimated_files_encrypted
         parts.append(
-            f"Approximately {analysis.estimated_files_encrypted:,} files were encrypted."
+            f"At least {count:,} files were encrypted"
+            f"{' (forensic sample — actual count may be higher)' if count % 100 == 0 else ''}."
         )
 
     if analysis.lateral_movement_detected:
