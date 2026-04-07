@@ -34,16 +34,24 @@ _IN_PROGRESS_STATUSES = {"mounting", "imaging", "collecting", "extracting_iocs",
 
 def _load_cases() -> dict:
     """Load persisted case records from disk.
-    Any case that was mid-analysis when the service stopped is marked interrupted.
+    - If report files exist on disk, mark the case complete regardless of saved status.
+    - If mid-analysis status and no report files, mark as interrupted.
     """
     if CASES_INDEX.exists():
         try:
             cases = json.loads(CASES_INDEX.read_text())
-            for c in cases.values():
-                if c.get("status") in _IN_PROGRESS_STATUSES:
+            for cid, c in cases.items():
+                # Check if the report was actually generated — if so it completed
+                report_txt = c.get("findings", {}) and c["findings"].get("report_txt")
+                report_on_disk = report_txt and Path(report_txt).exists()
+                # Also check default report path in case findings wasn't saved
+                default_report = OUTPUT_DIR / cid / "fbi_report.txt"
+                if report_on_disk or default_report.exists():
+                    c["status"] = "complete"
+                elif c.get("status") in _IN_PROGRESS_STATUSES:
                     c["status"] = "interrupted"
                     c["error"] = "Service restarted while analysis was running"
-                    c.setdefault("log", [])
+                c.setdefault("log", [])
             return cases
         except Exception:
             pass
@@ -54,11 +62,22 @@ def _save_cases():
     """Persist current case index to disk (excluding large log arrays)."""
     slim = {}
     for cid, c in active_cases.items():
-        slim[cid] = {k: v for k, v in c.items() if k != "log"}
+        # Build a serialization-safe copy
+        entry = {}
+        for k, v in c.items():
+            if k == "log":
+                continue  # too large
+            try:
+                json.dumps(v, default=str)  # test serialization
+                entry[k] = v
+            except Exception:
+                entry[k] = str(v)  # fallback: stringify problem values
+        slim[cid] = entry
     try:
         CASES_INDEX.write_text(json.dumps(slim, indent=2, default=str))
-    except Exception:
-        pass
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"Failed to save cases index: {e}")
 
 
 # Load any previously saved cases on startup
