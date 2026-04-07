@@ -595,10 +595,12 @@ def quick_identify():
 
 @app.route("/api/settings", methods=["GET", "POST"])
 def settings():
-    settings_path = Path.home() / ".rft" / "settings.json"
+    # Use a fixed path so settings persist regardless of whether run as sudo or user
+    settings_path = Path("/opt/rft/settings.json")
     if request.method == "POST":
         data = request.json or {}
         settings_path.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(str(settings_path.parent), 0o777) if settings_path.parent.exists() else None
         existing = {}
         if settings_path.exists():
             existing = json.loads(settings_path.read_text())

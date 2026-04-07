@@ -34,7 +34,7 @@ def get_local_ip() -> str:
 
 def load_saved_api_key():
     """Pre-load API key from settings file if present."""
-    settings_path = Path.home() / ".rft" / "settings.json"
+    settings_path = Path("/opt/rft/settings.json")
     if settings_path.exists():
         try:
             import json
