@@ -84,8 +84,20 @@ def _save_cases():
 
 
 def _rebuild_findings_from_disk(case_id: str) -> dict:
-    """Reconstruct the findings dict from the saved fbi_report.json on disk."""
-    report_path = OUTPUT_DIR / case_id / "fbi_report.json"
+    """Reconstruct findings from disk. Tries findings.json first (full data),
+    then falls back to fbi_report.json (partial data)."""
+    case_dir = OUTPUT_DIR / case_id
+
+    # Best case: full findings were saved
+    findings_path = case_dir / "findings.json"
+    if findings_path.exists():
+        try:
+            return json.loads(findings_path.read_text())
+        except Exception:
+            pass
+
+    # Fallback: rebuild what we can from the FBI report JSON
+    report_path = case_dir / "fbi_report.json"
     if not report_path.exists():
         return {}
     try:
@@ -93,6 +105,7 @@ def _rebuild_findings_from_disk(case_id: str) -> dict:
         return {
             "family": r.get("ransomware_name", "Unknown"),
             "attack_vector": r.get("attack_vector", "unknown"),
+            "attack_vector_description": r.get("attack_vector_description", ""),
             "encrypted_count": r.get("files_encrypted", 0),
             "ransom_notes": [],
             "iocs": {
@@ -106,23 +119,24 @@ def _rebuild_findings_from_disk(case_id: str) -> dict:
             "timeline": [],
             "ai_summary": r.get("ai_analysis_summary", ""),
             "critical_facts": [],
-            "recovery_feasibility": "Unknown",
-            "recommendations": [],
-            "report_txt": str(OUTPUT_DIR / case_id / "fbi_report.txt"),
-            "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
-            "report_pdf": str(OUTPUT_DIR / case_id / "fbi_report.pdf")
-                          if (OUTPUT_DIR / case_id / "fbi_report.pdf").exists() else None,
+            "recovery_feasibility": "See full report",
+            "recommendations": r.get("evidence_preserved", []),
+            "shadow_copies": None,
+            "attack_timeline": {},
+            "memory_analysis": None,
+            "file_recovery": None,
+            "report_txt": str(case_dir / "fbi_report.txt"),
+            "report_json": str(case_dir / "fbi_report.json"),
+            "report_pdf": str(case_dir / "fbi_report.pdf") if (case_dir / "fbi_report.pdf").exists() else None,
             "ransom_note_excerpt": r.get("ransom_note_excerpt", ""),
             "ransomware_confidence": r.get("ransomware_confidence", ""),
             "data_exfiltrated": r.get("data_exfiltrated", False),
-            "data_exfil_description": r.get("data_exfil_description", ""),
             "encryption_date": r.get("encryption_date", ""),
-            "attack_vector_description": r.get("attack_vector_description", ""),
         }
     except Exception:
         return {
-            "report_txt": str(OUTPUT_DIR / case_id / "fbi_report.txt"),
-            "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
+            "report_txt": str(case_dir / "fbi_report.txt"),
+            "report_json": str(case_dir / "fbi_report.json"),
         }
 
 
@@ -587,6 +601,13 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
             "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
             "report_pdf": pdf_path,
         }
+
+        # Save findings to disk so they survive service restarts
+        try:
+            findings_path = OUTPUT_DIR / case_id / "findings.json"
+            findings_path.write_text(json.dumps(case["findings"], indent=2, default=str))
+        except Exception as e:
+            log(f"Could not save findings cache: {e}", "warn")
 
         case["status"] = "complete"
         case["progress"] = 100
