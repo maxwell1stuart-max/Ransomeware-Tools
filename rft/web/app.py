@@ -69,6 +69,11 @@ def settings_page():
     return render_template("settings.html")
 
 
+@app.route("/network")
+def network_page():
+    return render_template("network.html")
+
+
 # ─── API: Drive Discovery ──────────────────────────────────────────────────────
 
 @app.route("/api/drives")
@@ -637,6 +642,136 @@ def settings():
             existing["api_key_set"] = True
             del existing["api_key"]
         return jsonify(existing)
+
+
+# ─── API: Network Acquisition ─────────────────────────────────────────────────
+
+# Store running acquisition jobs: {job_id: {"status": ..., "logs": [], "result": ...}}
+_acq_jobs: dict[str, dict] = {}
+
+
+@app.route("/api/network/scan")
+def network_scan():
+    """Scan local network for Windows hosts."""
+    fast = request.args.get("fast", "true").lower() == "true"
+    try:
+        from rft.network.scanner import scan_network
+        result = scan_network(fast=fast)
+        return jsonify({
+            "hosts": [
+                {
+                    "ip": h.ip,
+                    "hostname": h.hostname,
+                    "os": h.os,
+                    "smb_open": h.smb_open,
+                    "winrm_open": h.winrm_open,
+                    "mac": h.mac,
+                }
+                for h in result.hosts
+            ],
+            "subnet": result.subnet,
+            "scan_duration": result.scan_duration,
+            "local_ip": result.local_ip,
+        })
+    except Exception as e:
+        logger.exception("Network scan failed")
+        return jsonify({"error": str(e)}), 500
+
+
+@app.route("/api/network/acquire-ram", methods=["POST"])
+def network_acquire_ram():
+    """Start a remote RAM acquisition job."""
+    data = request.json or {}
+    target_ip = data.get("target_ip", "").strip()
+    username = data.get("username", "").strip()
+    password = data.get("password", "")
+    domain = data.get("domain", "").strip()
+    method = data.get("method", "auto")
+
+    if not target_ip or not username or not password:
+        return jsonify({"error": "target_ip, username, and password are required"}), 400
+
+    import threading, uuid
+    job_id = f"RAM-{uuid.uuid4().hex[:8].upper()}"
+    output_dir = OUTPUT_DIR / "ram_dumps" / job_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    _acq_jobs[job_id] = {"status": "running", "logs": [], "result": None}
+
+    def _run():
+        try:
+            from rft.network.remote_ram import acquire_remote_ram
+
+            def log_cb(msg, level="info"):
+                _acq_jobs[job_id]["logs"].append({"message": msg, "level": level})
+
+            result = acquire_remote_ram(
+                target_ip=target_ip,
+                username=username,
+                password=password,
+                output_dir=str(output_dir),
+                domain=domain,
+                method=method,
+                log_callback=log_cb,
+            )
+            _acq_jobs[job_id]["result"] = result
+            _acq_jobs[job_id]["status"] = "done"
+        except Exception as e:
+            _acq_jobs[job_id]["logs"].append({"message": f"Fatal error: {e}", "level": "error"})
+            _acq_jobs[job_id]["status"] = "error"
+
+    threading.Thread(target=_run, daemon=True).start()
+    return jsonify({"job_id": job_id})
+
+
+@app.route("/api/network/acquire-status/<job_id>")
+def network_acquire_status(job_id):
+    """SSE stream of acquisition progress."""
+    import time as _time
+
+    def _generate():
+        sent = 0
+        while True:
+            job = _acq_jobs.get(job_id)
+            if not job:
+                yield f"data: {json.dumps({'type': 'done', 'success': False, 'error': 'Job not found'})}\n\n"
+                return
+
+            logs = job["logs"]
+            while sent < len(logs):
+                entry = logs[sent]
+                yield f"data: {json.dumps({'type': 'log', 'message': entry['message'], 'level': entry['level']})}\n\n"
+                sent += 1
+
+            if job["status"] in ("done", "error"):
+                result = job.get("result")
+                if result and result.success:
+                    size_mb = result.dump_size_bytes / (1024 * 1024) if result.dump_size_bytes else 0
+                    yield f"data: {json.dumps({'type': 'done', 'success': True, 'size_mb': size_mb, 'job_id': job_id})}\n\n"
+                else:
+                    err = result.error if result else "Acquisition failed"
+                    yield f"data: {json.dumps({'type': 'done', 'success': False, 'error': err})}\n\n"
+                return
+
+            _time.sleep(0.5)
+
+    return Response(stream_with_context(_generate()), mimetype="text/event-stream",
+                    headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
+
+
+@app.route("/api/network/acquire-download/<job_id>")
+def network_acquire_download(job_id):
+    """Download the RAM dump file."""
+    job = _acq_jobs.get(job_id)
+    if not job or job["status"] != "done":
+        return jsonify({"error": "Job not ready"}), 404
+    result = job.get("result")
+    if not result or not result.dump_path:
+        return jsonify({"error": "No dump file available"}), 404
+    dump_path = Path(result.dump_path)
+    if not dump_path.exists():
+        return jsonify({"error": "Dump file not found on disk"}), 404
+    return send_file(str(dump_path), as_attachment=True, download_name=dump_path.name)
 
 
 def create_app():

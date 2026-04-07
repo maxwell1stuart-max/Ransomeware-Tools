@@ -56,6 +56,7 @@ def acquire_remote_ram(
     output_dir: str,
     domain: str = "",
     method: str = "auto",
+    log_callback=None,
 ) -> AcquisitionResult:
     """
     Remotely acquire RAM from a Windows machine over the network.
@@ -67,18 +68,24 @@ def acquire_remote_ram(
         output_dir: Where to save the RAM dump on the Pi
         domain: Windows domain (leave blank for local accounts)
         method: "smb", "winrm", or "auto" (tries SMB first)
+        log_callback: Optional callable(msg, level) for real-time log streaming
 
     Returns:
         AcquisitionResult with path to the dump file
     """
     result = AcquisitionResult(target_ip=target_ip)
-    output_path = Path(output_dir) / "ram_dumps"
+    output_path = Path(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
     dump_dest = output_path / f"{target_ip.replace('.', '_')}_ram.raw"
 
-    def log(msg: str):
+    def log(msg: str, level: str = "info"):
         logger.info(msg)
         result.log.append(msg)
+        if log_callback:
+            try:
+                log_callback(msg, level)
+            except Exception:
+                pass
 
     log(f"Starting remote RAM acquisition from {target_ip}")
 

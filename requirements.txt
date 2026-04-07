@@ -44,3 +44,8 @@ flask>=3.0.0                 # Web application server
 flask-cors>=4.0.0            # CORS for local network access
 waitress>=3.0.0              # Production WSGI server (Windows-safe)
 gunicorn>=21.2.0             # Production WSGI server (Linux)
+
+# Remote network acquisition
+impacket>=0.11.0             # SMB/WinRM for remote RAM acquisition
+pywinrm>=0.4.3               # WinRM fallback for remote acquisition
+requests>=2.31.0             # HTTP downloads (winpmem, tools)

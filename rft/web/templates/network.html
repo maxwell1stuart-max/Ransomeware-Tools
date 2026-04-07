@@ -1,0 +1,275 @@
+{% extends "base.html" %}
+{% block title %}Network Acquisition — RFT{% endblock %}
+
+{% block content %}
+<div class="page-header">
+  <h1>Network Acquisition</h1>
+  <p class="subtitle">Scan the local network and remotely acquire RAM dumps from Windows machines</p>
+</div>
+
+<!-- Network Scan Section -->
+<div class="card" style="margin-bottom:1.5rem;">
+  <div class="card-header" style="display:flex;align-items:center;justify-content:space-between;">
+    <h2 style="margin:0;">Host Discovery</h2>
+    <div style="display:flex;gap:0.75rem;align-items:center;">
+      <label style="display:flex;align-items:center;gap:0.5rem;font-size:0.85rem;color:var(--text-muted);">
+        <input type="checkbox" id="fast_scan" checked> Fast scan
+      </label>
+      <button class="btn btn-primary" id="scan-btn" onclick="startScan()">Scan Network</button>
+    </div>
+  </div>
+
+  <div id="scan-status" style="display:none;padding:0.75rem 1rem;background:var(--bg-secondary);border-radius:6px;margin:1rem 0;font-size:0.85rem;color:var(--text-muted);">
+    <span id="scan-status-text">Scanning...</span>
+  </div>
+
+  <div id="host-table-wrap" style="display:none;margin-top:1rem;">
+    <table class="data-table" id="host-table">
+      <thead>
+        <tr>
+          <th>IP Address</th>
+          <th>Hostname</th>
+          <th>OS</th>
+          <th>SMB</th>
+          <th>WinRM</th>
+          <th>Action</th>
+        </tr>
+      </thead>
+      <tbody id="host-rows"></tbody>
+    </table>
+  </div>
+
+  <div id="no-hosts" style="display:none;text-align:center;padding:2rem;color:var(--text-muted);">
+    No Windows hosts found on the network.
+  </div>
+</div>
+
+<!-- RAM Acquisition Section -->
+<div class="card" id="acquire-section" style="display:none;">
+  <div class="card-header">
+    <h2 style="margin:0;">Remote RAM Acquisition</h2>
+  </div>
+
+  <div style="padding:1rem 0;">
+    <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+      <div class="form-group">
+        <label>Target IP</label>
+        <input type="text" id="target_ip" class="form-control" readonly style="background:var(--bg-secondary);">
+      </div>
+      <div class="form-group">
+        <label>Username</label>
+        <input type="text" id="acq_username" class="form-control" placeholder="Administrator">
+      </div>
+      <div class="form-group">
+        <label>Password</label>
+        <input type="password" id="acq_password" class="form-control" placeholder="Password">
+      </div>
+    </div>
+    <div class="form-grid" style="grid-template-columns:1fr 1fr 1fr;">
+      <div class="form-group">
+        <label>Domain (optional)</label>
+        <input type="text" id="acq_domain" class="form-control" placeholder=".">
+      </div>
+      <div class="form-group">
+        <label>Method</label>
+        <select id="acq_method" class="form-control">
+          <option value="auto">Auto (SMB → WinRM)</option>
+          <option value="smb">SMB only</option>
+          <option value="winrm">WinRM only</option>
+        </select>
+      </div>
+      <div class="form-group" style="display:flex;align-items:flex-end;">
+        <button class="btn btn-primary" style="width:100%;" onclick="startAcquisition()">Acquire RAM Dump</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Progress log -->
+  <div id="acq-log-wrap" style="display:none;">
+    <div class="log-console" id="acq-log" style="height:300px;overflow-y:auto;font-size:0.8rem;"></div>
+    <div style="margin-top:0.75rem;display:flex;justify-content:space-between;align-items:center;">
+      <span id="acq-result-msg" style="font-size:0.9rem;"></span>
+      <button class="btn btn-secondary" id="acq-download-btn" style="display:none;" onclick="downloadDump()">Download RAM Dump</button>
+    </div>
+  </div>
+</div>
+
+<!-- Info box -->
+<div class="card" style="margin-top:1.5rem;border-color:var(--accent-blue-dim);">
+  <div class="card-header"><h3 style="margin:0;color:var(--accent-blue);">How Remote Acquisition Works</h3></div>
+  <div style="padding:0.5rem 0;font-size:0.875rem;color:var(--text-muted);line-height:1.7;">
+    <ol style="margin:0;padding-left:1.25rem;">
+      <li>The Pi scans the local network for Windows machines with SMB (port 445) or WinRM (port 5985) open.</li>
+      <li>You provide credentials for a local Administrator account on the target machine.</li>
+      <li>RFT uploads <strong>winpmem</strong> (open-source memory tool) to the target via SMB <code>ADMIN$</code> share.</li>
+      <li>winpmem runs on the target and creates a RAM image in <code>C:\Windows\Temp\</code>.</li>
+      <li>RFT downloads the RAM dump back to the Pi for offline analysis.</li>
+      <li>winpmem is deleted from the target — minimal footprint.</li>
+    </ol>
+    <p style="margin-top:0.75rem;"><strong>Note:</strong> This requires Administrator credentials on the target and that the target is reachable from the Pi over the network. Use only on machines you are authorized to examine.</p>
+  </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+let currentJobId = null;
+let acqEventSource = null;
+let selectedHost = null;
+
+function startScan() {
+  const btn = document.getElementById('scan-btn');
+  const status = document.getElementById('scan-status');
+  const statusText = document.getElementById('scan-status-text');
+  const fast = document.getElementById('fast_scan').checked;
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  status.style.display = 'block';
+  statusText.textContent = 'Discovering hosts on local network...';
+  document.getElementById('host-table-wrap').style.display = 'none';
+  document.getElementById('no-hosts').style.display = 'none';
+  document.getElementById('acquire-section').style.display = 'none';
+
+  fetch(`/api/network/scan?fast=${fast}`)
+    .then(r => r.json())
+    .then(data => {
+      btn.disabled = false;
+      btn.textContent = 'Scan Network';
+
+      if (data.error) {
+        statusText.textContent = 'Error: ' + data.error;
+        return;
+      }
+
+      const hosts = data.hosts || [];
+      statusText.textContent = `Scan complete — ${hosts.length} host(s) found in ${(data.scan_duration || 0).toFixed(1)}s  |  Subnet: ${data.subnet || 'unknown'}`;
+
+      if (hosts.length === 0) {
+        document.getElementById('no-hosts').style.display = 'block';
+        return;
+      }
+
+      const tbody = document.getElementById('host-rows');
+      tbody.innerHTML = '';
+      hosts.forEach(h => {
+        const tr = document.createElement('tr');
+        tr.innerHTML = `
+          <td><code>${h.ip}</code></td>
+          <td>${h.hostname || '<span style="color:var(--text-muted)">—</span>'}</td>
+          <td>${h.os || '<span style="color:var(--text-muted)">Unknown</span>'}</td>
+          <td>${h.smb_open ? '<span style="color:var(--accent-green)">Open</span>' : '<span style="color:var(--text-muted)">Closed</span>'}</td>
+          <td>${h.winrm_open ? '<span style="color:var(--accent-green)">Open</span>' : '<span style="color:var(--text-muted)">Closed</span>'}</td>
+          <td><button class="btn btn-sm btn-secondary" onclick="selectHost('${h.ip}')">Select</button></td>
+        `;
+        tbody.appendChild(tr);
+      });
+      document.getElementById('host-table-wrap').style.display = 'block';
+    })
+    .catch(err => {
+      btn.disabled = false;
+      btn.textContent = 'Scan Network';
+      statusText.textContent = 'Scan failed: ' + err.message;
+    });
+}
+
+function selectHost(ip) {
+  selectedHost = ip;
+  document.getElementById('target_ip').value = ip;
+  document.getElementById('acquire-section').style.display = 'block';
+  document.getElementById('acq-log-wrap').style.display = 'none';
+  document.getElementById('acq-result-msg').textContent = '';
+  document.getElementById('acq-download-btn').style.display = 'none';
+  document.getElementById('acquire-section').scrollIntoView({ behavior: 'smooth' });
+}
+
+function startAcquisition() {
+  const ip = document.getElementById('target_ip').value.trim();
+  const user = document.getElementById('acq_username').value.trim();
+  const pass = document.getElementById('acq_password').value;
+  const domain = document.getElementById('acq_domain').value.trim();
+  const method = document.getElementById('acq_method').value;
+
+  if (!ip || !user || !pass) {
+    alert('Please fill in IP, username, and password.');
+    return;
+  }
+
+  // Stop any existing stream
+  if (acqEventSource) { acqEventSource.close(); acqEventSource = null; }
+
+  const logDiv = document.getElementById('acq-log');
+  const logWrap = document.getElementById('acq-log-wrap');
+  logDiv.innerHTML = '';
+  logWrap.style.display = 'block';
+  document.getElementById('acq-result-msg').textContent = 'Acquisition in progress...';
+  document.getElementById('acq-download-btn').style.display = 'none';
+
+  fetch('/api/network/acquire-ram', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({ target_ip: ip, username: user, password: pass, domain, method })
+  })
+  .then(r => r.json())
+  .then(data => {
+    if (data.error) {
+      appendLog('ERROR: ' + data.error, 'error');
+      document.getElementById('acq-result-msg').textContent = 'Failed to start acquisition.';
+      return;
+    }
+    currentJobId = data.job_id;
+    subscribeAcquisitionStatus(currentJobId);
+  })
+  .catch(err => {
+    appendLog('Request failed: ' + err.message, 'error');
+    document.getElementById('acq-result-msg').textContent = 'Failed to start acquisition.';
+  });
+}
+
+function subscribeAcquisitionStatus(jobId) {
+  acqEventSource = new EventSource(`/api/network/acquire-status/${jobId}`);
+  acqEventSource.onmessage = function(e) {
+    const data = JSON.parse(e.data);
+    if (data.type === 'log') {
+      appendLog(data.message, data.level || 'info');
+    } else if (data.type === 'done') {
+      acqEventSource.close();
+      acqEventSource = null;
+      if (data.success) {
+        appendLog('Acquisition complete!', 'success');
+        document.getElementById('acq-result-msg').textContent =
+          `Done — ${(data.size_mb || 0).toFixed(1)} MB saved to Pi`;
+        if (data.job_id) {
+          document.getElementById('acq-download-btn').style.display = 'inline-block';
+          document.getElementById('acq-download-btn').dataset.jobId = data.job_id;
+        }
+      } else {
+        appendLog('Acquisition failed: ' + (data.error || 'Unknown error'), 'error');
+        document.getElementById('acq-result-msg').textContent = 'Acquisition failed.';
+      }
+    }
+  };
+  acqEventSource.onerror = function() {
+    acqEventSource.close();
+    acqEventSource = null;
+    appendLog('Connection to Pi lost.', 'error');
+  };
+}
+
+function downloadDump() {
+  const jobId = document.getElementById('acq-download-btn').dataset.jobId;
+  window.location.href = `/api/network/acquire-download/${jobId}`;
+}
+
+function appendLog(msg, level) {
+  const logDiv = document.getElementById('acq-log');
+  const line = document.createElement('div');
+  line.className = 'log-line' + (level === 'error' ? ' log-error' : level === 'success' ? ' log-success' : '');
+  const ts = new Date().toLocaleTimeString();
+  line.textContent = `[${ts}] ${msg}`;
+  logDiv.appendChild(line);
+  logDiv.scrollTop = logDiv.scrollHeight;
+}
+</script>
+{% endblock %}
