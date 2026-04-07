@@ -67,7 +67,9 @@ async function loadCases() {
 }
 
 function statusColor(s) {
-  return {complete:'green', error:'red', analyzing:'yellow', mounting:'yellow'}[s] || 'gray';
+  return {complete:'green', error:'red', interrupted:'red',
+          analyzing:'yellow', mounting:'yellow', collecting:'yellow',
+          reporting:'yellow', ai_analysis:'yellow'}[s] || 'gray';
 }
 function formatDate(iso) {
   if (!iso) return '—';

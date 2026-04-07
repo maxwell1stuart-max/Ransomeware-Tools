@@ -26,11 +26,25 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 CASES_INDEX = OUTPUT_DIR / "cases_index.json"
 
 
+_TERMINAL_STATUSES = {"complete", "error", "interrupted"}
+_IN_PROGRESS_STATUSES = {"mounting", "imaging", "collecting", "extracting_iocs",
+                         "analyzing_logs", "synthesizing", "shadow_copies", "timeline",
+                         "memory_analysis", "file_recovery", "ai_analysis", "reporting"}
+
+
 def _load_cases() -> dict:
-    """Load persisted case records from disk."""
+    """Load persisted case records from disk.
+    Any case that was mid-analysis when the service stopped is marked interrupted.
+    """
     if CASES_INDEX.exists():
         try:
-            return json.loads(CASES_INDEX.read_text())
+            cases = json.loads(CASES_INDEX.read_text())
+            for c in cases.values():
+                if c.get("status") in _IN_PROGRESS_STATUSES:
+                    c["status"] = "interrupted"
+                    c["error"] = "Service restarted while analysis was running"
+                    c.setdefault("log", [])
+            return cases
         except Exception:
             pass
     return {}
