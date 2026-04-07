@@ -334,11 +334,15 @@ function statusMsg(s) {
     extracting_iocs: 'Extracting IOCs...',
     analyzing_logs: 'Analyzing Windows Event Logs...',
     synthesizing: 'Building attack chain...',
+    shadow_copies: 'Scanning for shadow copies...',
+    timeline: 'Building attack timeline...',
+    memory_analysis: 'Scanning for memory dumps...',
+    file_recovery: 'Attempting deleted file recovery...',
     ai_analysis: 'Running AI analysis (Claude Opus)...',
     reporting: 'Generating FBI report...',
     complete: 'Analysis complete!',
     error: 'Error during analysis',
-  }[s] || s;
+  }[s] || s || 'In progress...';
 }
 
 // ── Results ───────────────────────────────────────────────────────────────────
@@ -436,8 +440,14 @@ function showActiveBanner(caseId, status) {
     <svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
     Analysis in progress: <strong>${caseId}</strong> — ${statusMsg(status)}
     <a href="/report/${caseId}" class="btn btn-ghost btn-sm" style="margin-left:auto">View Report</a>
+    <button class="btn btn-ghost btn-sm" onclick="clearActiveCase()" style="margin-left:8px">✕ Clear</button>
   `;
   header.after(banner);
+}
+
+function clearActiveCase() {
+  localStorage.removeItem('rft_active_case');
+  location.reload();
 }
 
 function replayLogs(logs) {
