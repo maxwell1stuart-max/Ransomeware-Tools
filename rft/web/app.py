@@ -662,15 +662,15 @@ def network_scan():
                 {
                     "ip": h.ip,
                     "hostname": h.hostname,
-                    "os": h.os,
-                    "smb_open": h.smb_open,
-                    "winrm_open": h.winrm_open,
-                    "mac": h.mac,
+                    "os": h.os_guess,
+                    "smb_open": h.smb_available,
+                    "winrm_open": h.winrm_available,
+                    "mac": h.mac_address,
                 }
                 for h in result.hosts
             ],
             "subnet": result.subnet,
-            "scan_duration": result.scan_duration,
+            "scan_duration": result.scan_time_seconds,
             "local_ip": result.local_ip,
         })
     except Exception as e:
