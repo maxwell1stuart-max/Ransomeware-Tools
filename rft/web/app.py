@@ -224,7 +224,7 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
 
         from rft.analysis.ioc_extractor import extract_iocs
         note_texts = [
-            Path(n.absolute_path).read_text(errors="replace")
+            (Path(n.absolute_path).read_text(errors="replace"), n.absolute_path)
             for n in collection.ransom_notes[:5]
         ]
         ioc_report = extract_iocs(note_texts)
@@ -574,7 +574,7 @@ def quick_identify():
         return jsonify({"error": "No text provided"}), 400
     try:
         from rft.analysis.ioc_extractor import extract_iocs
-        ioc_report = extract_iocs([text])
+        ioc_report = extract_iocs([(text, "user_input")])
         family = ioc_report.identified_family
         return jsonify({
             "family": family,
