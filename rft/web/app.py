@@ -394,11 +394,18 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         )
         report = generate_fbi_report(analysis, ai_result, victim)
         # Save the report to disk
-        from rft.reporting.fbi_report import save_report_json, save_report_text
+        from rft.reporting.fbi_report import save_report_json, save_report_text, save_report_pdf
         case_out = OUTPUT_DIR / case_id
         case_out.mkdir(parents=True, exist_ok=True)
         save_report_json(report, str(case_out / "fbi_report.json"))
         save_report_text(report, str(case_out / "fbi_report.txt"))
+        pdf_path = str(case_out / "fbi_report.pdf")
+        pdf_saved = save_report_pdf(report, pdf_path)
+        if pdf_saved:
+            log("PDF report generated", "success")
+        else:
+            log("PDF generation skipped (reportlab not installed — text/JSON available)", "warn")
+            pdf_path = None
         log(f"Reports saved to: output/{case_id}/", "success")
 
         # Build findings summary for the UI
@@ -457,7 +464,7 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
             } if recovery_result else None,
             "report_txt": str(OUTPUT_DIR / case_id / "fbi_report.txt"),
             "report_json": str(OUTPUT_DIR / case_id / "fbi_report.json"),
-            "report_pdf": str(OUTPUT_DIR / case_id / f"{case_id}_fbi_report.pdf"),
+            "report_pdf": pdf_path,
         }
 
         case["status"] = "complete"
@@ -552,9 +559,15 @@ def download_report(case_id, fmt):
     }
     path = path_map.get(fmt)
     if not path or not Path(path).exists():
+        if fmt == "pdf":
+            return jsonify({
+                "error": "PDF not available — install reportlab on the Pi: sudo pip3 install --break-system-packages reportlab",
+                "fallback": "txt"
+            }), 404
         return jsonify({"error": f"Report format '{fmt}' not available"}), 404
 
-    return send_file(path, as_attachment=True)
+    filename = f"RFT_{case_id}_{fmt}.{fmt}"
+    return send_file(path, as_attachment=True, download_name=filename)
 
 
 # ─── API: List all cases ───────────────────────────────────────────────────────
