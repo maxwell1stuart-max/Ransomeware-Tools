@@ -229,10 +229,10 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
         ]
         ioc_report = extract_iocs(note_texts)
 
-        family = ioc_report.identified_family
+        family = ioc_report.ransom_family_clues[0].value if ioc_report.ransom_family_clues else None
         log(f"Family identified: {family or 'Unknown'}", "success" if family else "warn")
         log(f"Bitcoin wallets: {len(ioc_report.bitcoin_addresses)}")
-        log(f"Tor addresses: {len(ioc_report.tor_addresses)}")
+        log(f"Tor addresses: {len(ioc_report.onion_addresses)}")
         case["progress"] = 60
 
         # Step 4: Event log analysis
@@ -573,16 +573,18 @@ def quick_identify():
     if not text:
         return jsonify({"error": "No text provided"}), 400
     try:
-        from rft.analysis.ioc_extractor import extract_iocs
+        from rft.analysis.ioc_extractor import extract_iocs, identify_ransomware_family
         ioc_report = extract_iocs([(text, "user_input")])
-        family = ioc_report.identified_family
+        family_result = identify_ransomware_family(text)
+        family = family_result[0] if family_result else None
+        confidence = family_result[1] if family_result else None
         return jsonify({
             "family": family,
-            "confidence": ioc_report.family_confidence,
+            "confidence": confidence,
             "iocs": {
-                "bitcoin": ioc_report.bitcoin_addresses,
-                "tor": ioc_report.tor_addresses,
-                "emails": ioc_report.email_addresses,
+                "bitcoin": [i.value for i in ioc_report.bitcoin_addresses],
+                "tor": [i.value for i in ioc_report.onion_addresses],
+                "emails": [i.value for i in ioc_report.email_addresses],
             }
         })
     except Exception as e:
