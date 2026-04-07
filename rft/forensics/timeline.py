@@ -233,7 +233,7 @@ def _collect_filesystem_timestamps(
 
 def _merge_event_log_timeline(log_analysis, events: list[TimelineEvent]):
     """Merge pre-parsed event log entries into the master timeline."""
-    if not hasattr(log_analysis, "timeline"):
+    if not hasattr(log_analysis, "timeline_entries"):
         return
 
     severity_map = {
@@ -246,7 +246,7 @@ def _merge_event_log_timeline(log_analysis, events: list[TimelineEvent]):
         "powershell": "high",
     }
 
-    for entry in log_analysis.timeline:
+    for entry in log_analysis.timeline_entries:
         ts = entry.timestamp
         if not isinstance(ts, datetime):
             try:

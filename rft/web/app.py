@@ -243,8 +243,8 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
             from rft.analysis.log_analyzer import analyze_event_logs
             evtx_paths = [a.absolute_path for a in collection.event_logs]
             log_analysis = analyze_event_logs(evtx_paths)
-            log(f"Attack timeline: {len(log_analysis.timeline)} events")
-            log(f"Failed logons: {log_analysis.failed_logon_count}")
+            log(f"Attack timeline: {len(log_analysis.timeline_entries)} events")
+            log(f"Failed logons: {len(log_analysis.failed_logons)}")
         case["progress"] = 70
 
         # Step 5: Synthesis
@@ -398,7 +398,7 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
                     "event": e.description,
                     "event_id": getattr(e, 'event_id', None),
                 }
-                for e in (log_analysis.timeline[:30] if log_analysis else [])
+                for e in (log_analysis.timeline_entries[:30] if log_analysis else [])
             ],
             "ai_summary": ai_result.summary if ai_result else None,
             "critical_facts": ai_result.critical_facts if ai_result else [],
