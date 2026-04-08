@@ -19,7 +19,7 @@
         <div id="active-scan-id" style="font-family:monospace;font-size:0.8rem;color:var(--accent-blue);"></div>
       </div>
     </div>
-    <a href="/scan" class="btn btn-primary btn-sm">View Progress</a>
+    <a id="view-progress-btn" href="/scan" class="btn btn-primary btn-sm">View Progress</a>
   </div>
 </div>
 
@@ -73,6 +73,8 @@ async function loadDashboard() {
   if (active) {
     document.getElementById('active-scan-card').style.display = 'block';
     document.getElementById('active-scan-id').textContent = active.case_id;
+    // Pass case_id in URL so scan page can reconnect even without localStorage
+    document.getElementById('view-progress-btn').href = `/scan?case=${encodeURIComponent(active.case_id)}`;
   }
 
   if (!cases.length) return;

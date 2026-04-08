@@ -199,8 +199,34 @@ fetch('/api/detect-network')
     document.getElementById('subnet-hint').textContent = 'Could not auto-detect — enter manually';
   });
 
-// Check localStorage for active scan
-window.addEventListener('load', () => {
+// On load: reconnect to active scan from URL param, localStorage, or API
+window.addEventListener('load', async () => {
+  // 1. Prefer URL param (?case=APT-...) — set by dashboard "View Progress" button
+  const urlParams = new URLSearchParams(window.location.search);
+  const urlCaseId = urlParams.get('case');
+
+  if (urlCaseId) {
+    // Verify the case exists and get its current status
+    try {
+      const data = await fetch(`/api/scan/${encodeURIComponent(urlCaseId)}/status`).then(r => r.json());
+      if (!data.error) {
+        currentCaseId = urlCaseId;
+        if (data.status === 'complete') {
+          localStorage.setItem('apt_active_scan', JSON.stringify({caseId: urlCaseId, status: 'complete'}));
+          onScanComplete(urlCaseId);
+        } else if (data.status === 'error' || data.status === 'interrupted') {
+          showActiveBanner(urlCaseId, data.status);
+        } else {
+          localStorage.setItem('apt_active_scan', JSON.stringify({caseId: urlCaseId, status: 'running'}));
+          showScanProgress(urlCaseId);
+          subscribeStream(urlCaseId);
+        }
+        return;
+      }
+    } catch(e) {}
+  }
+
+  // 2. Fall back to localStorage
   const saved = localStorage.getItem('apt_active_scan');
   if (saved) {
     try {
@@ -209,7 +235,6 @@ window.addEventListener('load', () => {
         if (status === 'complete') {
           showActiveBanner(caseId, status);
         } else {
-          // Reconnect to running scan
           currentCaseId = caseId;
           showScanProgress(caseId);
           subscribeStream(caseId);
