@@ -318,13 +318,19 @@ def enumerate_hosts(
         # Build nmap service scan command
         # -sV: version detection
         # -sC: default scripts
-        # -O: OS detection
-        # --version-intensity 5: balance speed vs accuracy
-        cmd = [
-            "nmap", "-sV", "-sC", "-O", "--osscan-guess",
-            "--version-intensity", "5",
-            "-T4",
-        ]
+        # -O requires root (raw socket access); use -sT (TCP connect) when not root
+        import os as _os
+        is_root = _os.getuid() == 0
+
+        cmd = ["nmap", "-sV", "-sC", "--version-intensity", "5", "-T4"]
+
+        if is_root:
+            # SYN scan (faster) + OS detection — both require root
+            cmd += ["-O", "--osscan-guess"]
+        else:
+            # TCP connect scan — works without root, slightly slower
+            cmd += ["-sT"]
+            _log(f"  Not running as root — using TCP connect scan (no OS detection). For full results, run as root.", "warn", log_callback)
 
         if top_ports:
             cmd += ["--top-ports", "1000"]

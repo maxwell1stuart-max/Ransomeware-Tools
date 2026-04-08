@@ -252,11 +252,9 @@ def discover_hosts(
         return result
 
     # Build nmap command
-    # -sn: ping scan only (no port scan)
-    # -O: OS detection
-    # --osscan-guess: guess OS even with limited info
-    # -oX -: XML output to stdout
-    cmd = ["nmap", "-sn", "--osscan-guess"]
+    # -sn: ping scan only (no port scan in this phase — service scan is Phase 2)
+    # Note: -O (OS detection) requires a port scan, so it cannot be combined with -sn here
+    cmd = ["nmap", "-sn"]
 
     if fast:
         cmd += ["-T4"]
@@ -267,9 +265,6 @@ def discover_hosts(
         _log("Skip ping enabled — treating all hosts as up (slower)", "warn", log_callback)
     else:
         cmd += ["-PE", "-PP", "-PS21,22,23,25,80,443,3389,8080"]  # Better host detection
-
-    # Add OS detection (needs root)
-    cmd += ["-O", "--osscan-guess"]
 
     cmd += ["-oX", "-", subnet]
 

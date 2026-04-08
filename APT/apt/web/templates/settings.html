@@ -36,37 +36,43 @@
 {% endblock %}
 {% block scripts %}
 <script>
-const REQUIRED_TOOLS = [
-  {name:'nmap', desc:'Host discovery & vulnerability scanning'},
-  {name:'hydra', desc:'Credential testing'},
-  {name:'msfconsole', desc:'Metasploit exploitation framework'},
-  {name:'nikto', desc:'Web application scanning'},
-  {name:'enum4linux', desc:'SMB/AD enumeration'},
-  {name:'crackmapexec', desc:'Windows network enumeration (also: netexec, cme)'},
-  {name:'whatweb', desc:'Web technology fingerprinting'},
-];
-
 async function checkTools() {
-  // We check tool status via a simple API endpoint
-  // For now show a static table — in production this would hit /api/tool-status
   const el = document.getElementById('tool-status');
-  el.innerHTML = `
-    <table class="data-table">
-      <thead><tr><th>Tool</th><th>Purpose</th><th>Install</th></tr></thead>
-      <tbody>
-        ${REQUIRED_TOOLS.map(t => `
-          <tr>
-            <td class="mono">${t.name}</td>
-            <td style="font-size:0.8rem;color:var(--text-muted);">${t.desc}</td>
-            <td style="font-size:0.8rem;"><code>sudo apt-get install ${t.name}</code></td>
-          </tr>
-        `).join('')}
-      </tbody>
-    </table>
-    <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">
-      Install all at once: <code>sudo apt-get install -y nmap hydra metasploit-framework nikto enum4linux crackmapexec whatweb</code>
-    </div>
-  `;
+  try {
+    const data = await fetch('/api/tool-status').then(r => r.json());
+    const tools = data.tools || [];
+    const isRoot = data.is_root;
+    const rootWarn = data.root_warning;
+
+    el.innerHTML = `
+      ${rootWarn ? `<div style="padding:8px 12px;margin-bottom:0.75rem;background:#2d1b00;border:1px solid var(--accent-orange);border-radius:6px;font-size:0.8rem;color:var(--accent-orange);">
+        ⚠ ${rootWarn}
+      </div>` : `<div style="padding:8px 12px;margin-bottom:0.75rem;background:#0d2618;border:1px solid var(--accent-green);border-radius:6px;font-size:0.8rem;color:var(--accent-green);">
+        ✓ Running as root — full nmap capabilities available
+      </div>`}
+      <table class="data-table">
+        <thead><tr><th>Tool</th><th>Status</th><th>Purpose</th><th>Install if missing</th></tr></thead>
+        <tbody>
+          ${tools.map(t => `
+            <tr>
+              <td class="mono">${t.name}</td>
+              <td>${t.installed
+                ? `<span style="color:var(--accent-green);font-weight:600;">✓ Installed</span>`
+                : `<span style="color:${t.required ? 'var(--accent-red)' : 'var(--accent-orange)'};font-weight:600;">${t.required ? '✗ Missing (required)' : '! Missing (optional)'}</span>`
+              }</td>
+              <td style="font-size:0.8rem;color:var(--text-muted);">${t.desc}</td>
+              <td style="font-size:0.78rem;"><code>sudo apt-get install ${t.name === 'msfconsole' ? 'metasploit-framework' : t.name}</code></td>
+            </tr>
+          `).join('')}
+        </tbody>
+      </table>
+      <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">
+        Install all: <code>sudo apt-get install -y nmap hydra metasploit-framework nikto enum4linux crackmapexec whatweb</code>
+      </div>
+    `;
+  } catch(e) {
+    el.innerHTML = `<div style="color:var(--text-muted);font-size:0.85rem;">Could not load tool status.</div>`;
+  }
 }
 
 async function loadSettings() {

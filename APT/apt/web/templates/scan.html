@@ -331,7 +331,35 @@ function subscribeStream(caseId) {
   };
 
   eventSource.onerror = function() {
-    appendLog('Connection to scan lost — check server status', 'error');
+    eventSource.close();
+    eventSource = null;
+    // Try to recover — fetch status directly (handles server restart)
+    fetch(`/api/scan/${caseId}/status`)
+      .then(r => r.json())
+      .then(data => {
+        if (data.error) {
+          // Case not in memory — check cases list for completed status
+          return fetch('/api/cases').then(r => r.json()).then(d => {
+            const found = (d.cases||[]).find(c => c.case_id === caseId);
+            if (found && found.status === 'complete') {
+              onScanComplete(caseId);
+            } else {
+              appendLog('Connection lost — server may have restarted. Check Engagements for results.', 'warn');
+            }
+          });
+        }
+        if (data.status === 'complete') {
+          onScanComplete(caseId);
+        } else if (data.status === 'error') {
+          onScanError(data.status);
+        } else {
+          // Still running — reconnect after delay
+          setTimeout(() => subscribeStream(caseId), 3000);
+        }
+      })
+      .catch(() => {
+        appendLog('Connection lost — server may have restarted. Check Engagements for results.', 'warn');
+      });
   };
 }
 

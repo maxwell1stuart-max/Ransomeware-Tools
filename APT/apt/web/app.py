@@ -124,6 +124,35 @@ def settings_page():
     return render_template("settings.html")
 
 
+# ── API: Tool status ──────────────────────────────────────────────────────────
+
+@app.route("/api/tool-status")
+def tool_status():
+    import shutil
+    import os as _os
+    is_root = _os.getuid() == 0
+    tools = [
+        {"name": "nmap",          "required": True,  "desc": "Host discovery & vulnerability scanning"},
+        {"name": "hydra",         "required": True,  "desc": "Credential brute force testing"},
+        {"name": "msfconsole",    "required": False, "desc": "Metasploit exploitation (aggressive mode only)"},
+        {"name": "nikto",         "required": False, "desc": "Web application scanning"},
+        {"name": "enum4linux",    "required": False, "desc": "SMB/AD enumeration"},
+        {"name": "crackmapexec",  "required": False, "desc": "Windows network enumeration"},
+        {"name": "netexec",       "required": False, "desc": "Windows network enumeration (newer cme)"},
+        {"name": "whatweb",       "required": False, "desc": "Web technology fingerprinting"},
+    ]
+    for t in tools:
+        t["installed"] = bool(shutil.which(t["name"]))
+    # crackmapexec aliases
+    if not tools[5]["installed"]:
+        tools[5]["installed"] = bool(shutil.which("cme") or shutil.which("nxc") or shutil.which("netexec"))
+    return jsonify({
+        "tools": tools,
+        "is_root": is_root,
+        "root_warning": None if is_root else "Not running as root — nmap OS detection and SYN scanning disabled. Run as root for full capabilities.",
+    })
+
+
 # ── API: Network detection ────────────────────────────────────────────────────
 
 @app.route("/api/detect-network")
@@ -193,6 +222,17 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
         os.nice(10)
     except Exception:
         pass
+
+    # Pre-flight checks
+    import shutil as _shutil
+    is_root = os.getuid() == 0
+    if not is_root:
+        log("WARNING: Not running as root — nmap OS detection disabled, SYN scan unavailable. Run as root for full capabilities.", "warn")
+    if not _shutil.which("nmap"):
+        log("WARNING: nmap not found — install with: sudo apt-get install nmap", "warn")
+    if not _shutil.which("hydra"):
+        log("INFO: hydra not found — credential testing will be skipped. Install: sudo apt-get install hydra", "info")
+    log(f"Starting 7-phase automated assessment of {subnet}...", "info")
 
     discovery_result = None
     enum_results = []
