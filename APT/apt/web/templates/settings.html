@@ -17,9 +17,9 @@
 <div class="card" style="max-width:600px;">
   <div class="card-header"><h2>Default Wordlists</h2></div>
   <div style="font-size:0.875rem;color:var(--text-muted);line-height:1.8;">
-    Credential testing uses built-in common credentials (no wordlist needed for basic testing).<br>
-    For extended wordlists, install: <code>sudo apt-get install wordlists</code><br>
-    Then gunzip: <code>sudo gunzip /usr/share/wordlists/rockyou.txt.gz</code>
+    APT uses 60 built-in common credentials — no wordlist needed for standard testing.<br>
+    To download rockyou for extended brute force:<br>
+    <code>sudo mkdir -p /usr/share/wordlists && sudo wget -q "https://github.com/brannondorsey/naive-hashcat/releases/download/data/rockyou.txt" -O /usr/share/wordlists/rockyou.txt</code>
   </div>
 </div>
 
@@ -36,6 +36,19 @@
 {% endblock %}
 {% block scripts %}
 <script>
+function installCmd(name) {
+  const cmds = {
+    'nmap':         'sudo apt-get install nmap',
+    'hydra':        'sudo apt-get install hydra',
+    'msfconsole':   'see Rapid7 nightly installer (optional)',
+    'nikto':        'sudo apt-get install nikto',
+    'enum4linux-ng':'sudo apt-get install enum4linux',
+    'netexec':      'pipx install netexec',
+    'whatweb':      'sudo apt-get install whatweb',
+  };
+  return cmds[name] || `sudo apt-get install ${name}`;
+}
+
 async function checkTools() {
   const el = document.getElementById('tool-status');
   try {
@@ -61,13 +74,15 @@ async function checkTools() {
                 : `<span style="color:${t.required ? 'var(--accent-red)' : 'var(--accent-orange)'};font-weight:600;">${t.required ? '✗ Missing (required)' : '! Missing (optional)'}</span>`
               }</td>
               <td style="font-size:0.8rem;color:var(--text-muted);">${t.desc}</td>
-              <td style="font-size:0.78rem;"><code>sudo apt-get install ${t.name === 'msfconsole' ? 'metasploit-framework' : t.name}</code></td>
+              <td style="font-size:0.78rem;"><code>${installCmd(t.name)}</code></td>
             </tr>
           `).join('')}
         </tbody>
       </table>
       <div style="margin-top:0.75rem;font-size:0.8rem;color:var(--text-muted);">
-        Install all: <code>sudo apt-get install -y nmap hydra metasploit-framework nikto enum4linux crackmapexec whatweb</code>
+        Install available tools: <code>sudo apt-get install -y nmap hydra nikto enum4linux whatweb</code><br>
+        Install netexec (SMB enum): <code>pipx install netexec</code><br>
+        Install Metasploit (exploitation only): see <a href="https://docs.metasploit.com/docs/using-metasploit/getting-started/nightly-installers.html" style="color:var(--accent-blue);" target="_blank">Rapid7 installer</a>
       </div>
     `;
   } catch(e) {
