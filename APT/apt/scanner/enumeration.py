@@ -153,14 +153,15 @@ def _run_enum4linux(ip: str, log_callback: Optional[Callable] = None) -> tuple:
     domain = ""
     os_info = ""
 
-    if not shutil.which("enum4linux"):
-        _log(f"  enum4linux not found — skipping SMB enumeration for {ip}", "warn", log_callback)
+    e4l_bin = shutil.which("enum4linux-ng") or shutil.which("enum4linux")
+    if not e4l_bin:
+        _log(f"  enum4linux/enum4linux-ng not found — skipping SMB enumeration for {ip}", "warn", log_callback)
         return shares, users, domain, os_info
 
-    _log(f"  Running enum4linux -a {ip}", "info", log_callback)
+    _log(f"  Running {e4l_bin} -A {ip}", "info", log_callback)
     try:
         proc = subprocess.run(
-            ["enum4linux", "-a", ip],
+            [e4l_bin, "-A", ip],
             capture_output=True, text=True, timeout=120
         )
         output = proc.stdout + proc.stderr

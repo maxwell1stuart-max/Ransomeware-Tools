@@ -136,16 +136,18 @@ def tool_status():
         {"name": "hydra",         "required": True,  "desc": "Credential brute force testing"},
         {"name": "msfconsole",    "required": False, "desc": "Metasploit exploitation (aggressive mode only)"},
         {"name": "nikto",         "required": False, "desc": "Web application scanning"},
-        {"name": "enum4linux",    "required": False, "desc": "SMB/AD enumeration"},
-        {"name": "crackmapexec",  "required": False, "desc": "Windows network enumeration"},
-        {"name": "netexec",       "required": False, "desc": "Windows network enumeration (newer cme)"},
+        {"name": "enum4linux-ng", "required": False, "desc": "SMB/AD enumeration (also: enum4linux)"},
+        {"name": "netexec",       "required": False, "desc": "Windows network enumeration (also: crackmapexec, cme)"},
         {"name": "whatweb",       "required": False, "desc": "Web technology fingerprinting"},
     ]
     for t in tools:
         t["installed"] = bool(shutil.which(t["name"]))
-    # crackmapexec aliases
+    # enum4linux aliases
     if not tools[5]["installed"]:
-        tools[5]["installed"] = bool(shutil.which("cme") or shutil.which("nxc") or shutil.which("netexec"))
+        tools[5]["installed"] = bool(shutil.which("enum4linux"))
+    # netexec/crackmapexec aliases
+    if not tools[6]["installed"]:
+        tools[6]["installed"] = bool(shutil.which("crackmapexec") or shutil.which("cme") or shutil.which("nxc"))
     return jsonify({
         "tools": tools,
         "is_root": is_root,
