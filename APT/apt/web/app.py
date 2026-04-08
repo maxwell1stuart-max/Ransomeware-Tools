@@ -252,6 +252,26 @@ def tool_status():
     })
 
 
+# ── API: Cancel scan ─────────────────────────────────────────────────────────
+
+@app.route("/api/scan/<case_id>/cancel", methods=["POST"])
+@_require_auth
+def cancel_scan(case_id):
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
+    with _cases_lock:
+        case = active_cases.get(case_id)
+        if not case:
+            return jsonify({"error": "Case not found"}), 404
+        if case.get("status") not in _IN_PROGRESS:
+            return jsonify({"ok": True, "note": "Scan already finished"})
+        case["status"] = "cancelled"
+        case["error"] = "Cancelled by user"
+        case["completed_at"] = datetime.now().isoformat()
+    _save_cases()
+    return jsonify({"ok": True})
+
+
 # ── API: Network detection ────────────────────────────────────────────────────
 
 @app.route("/api/detect-network")
@@ -348,6 +368,9 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
     cred_result = None
     exploit_result = None
 
+    def _is_cancelled():
+        return active_cases.get(case_id, {}).get("status") == "cancelled"
+
     try:
         # Phase 1: Discovery
         log(f"Starting host discovery on {subnet}...")
@@ -360,6 +383,7 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
             skip_ping=skip_ping,
             log_callback=log,
         )
+        if _is_cancelled(): return
         host_count = len(discovery_result.hosts)
         log(f"Discovery complete: {host_count} live host(s) found", "success" if host_count else "warn")
         case["progress"] = 20
@@ -381,6 +405,7 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
             top_ports=(aggression != "aggressive"),
             log_callback=log,
         )
+        if _is_cancelled(): return
         log(f"Enumeration complete", "success")
         case["progress"] = 40
 
@@ -389,6 +414,7 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
         case["status"] = "vulnscan"
         from apt.scanner.vulnscan import scan_vulnerabilities
         vuln_results = scan_vulnerabilities(enum_results, log_callback=log)
+        if _is_cancelled(): return
         total_vulns = sum(len(r.vulnerabilities) for r in vuln_results)
         log(f"Vulnerability scan complete: {total_vulns} finding(s)", "success" if total_vulns else "info")
         case["progress"] = 60
@@ -399,6 +425,7 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
             case["status"] = "credtest"
             from apt.scanner.credtest import test_credentials
             cred_result = test_credentials(enum_results, log_callback=log)
+            if _is_cancelled(): return
             log(f"Credential testing complete: {len(cred_result.findings)} valid pair(s)",
                 "success" if cred_result.findings else "info")
             case["progress"] = 75
@@ -411,6 +438,7 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
             case["status"] = "exploitation"
             from apt.scanner.exploitation import attempt_exploitation
             exploit_result = attempt_exploitation(vuln_results, cred_result.findings if cred_result else [], log_callback=log)
+            if _is_cancelled(): return
             compromised = sum(1 for r in exploit_result.results if r.success)
             log(f"Exploitation complete: {compromised} system(s) compromised",
                 "success" if compromised else "info")
@@ -576,7 +604,7 @@ def scan_stream(case_id):
             progress = case.get("progress", 0)
             yield f"data: {json.dumps({'type': 'status', 'status': status, 'progress': progress})}\n\n"
 
-            if status in ("complete", "error", "interrupted"):
+            if status in ("complete", "error", "interrupted", "cancelled"):
                 yield f"data: {json.dumps({'type': 'done', 'status': status, 'case_id': case_id})}\n\n"
                 return
 

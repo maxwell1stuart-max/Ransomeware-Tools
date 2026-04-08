@@ -1,27 +1,28 @@
 {% extends "base.html" %}
-{% block title %}New Scan — APT{% endblock %}
+{% block title %}Scan — APT{% endblock %}
 
 {% block content %}
 <div class="page-header">
-  <div>
-    <h1>New Scan</h1>
-    <p class="subtitle">Configure scope, confirm authorization, and start automated penetration test</p>
+  <div id="page-header-main">
+    <h1 id="page-title">Scan</h1>
+    <p class="subtitle" id="page-subtitle">Configure scope, confirm authorization, and start automated penetration test</p>
   </div>
 </div>
 
-<!-- Active scan banner (shown if scan already running) -->
-<div class="active-scan-banner" id="active-banner" style="display:none;">
-  <div class="banner-left">
-    <div class="spinner"></div>
-    <div>
-      <strong>Scan in Progress</strong> &nbsp;
-      <span id="banner-case-id" style="font-family:monospace;font-size:0.85rem;color:var(--accent-blue);"></span>
-      <div id="banner-status" style="font-size:0.8rem;color:var(--text-muted);margin-top:2px;"></div>
+<!-- Confirmation modal: shown when user tries to start a new scan while one is running -->
+<div id="confirm-modal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,0.7);z-index:1000;align-items:center;justify-content:center;" onclick="if(event.target===this)closeModal()">
+  <div class="card" style="max-width:420px;width:90%;margin:0 auto;">
+    <div class="card-header">
+      <h2 style="color:var(--accent-orange);">Terminate Current Scan?</h2>
     </div>
-  </div>
-  <div style="display:flex;gap:0.5rem;">
-    <a id="banner-report-link" href="#" class="btn btn-primary btn-sm" style="display:none;">View Report</a>
-    <button class="btn btn-ghost btn-sm" onclick="clearActiveScan()">✕ Clear</button>
+    <p style="color:var(--text-muted);margin:0 0 1.5rem;">
+      A scan is currently in progress. Starting a new scan will terminate it immediately.
+      Any results collected so far will be saved.
+    </p>
+    <div style="display:flex;gap:0.75rem;justify-content:flex-end;">
+      <button class="btn btn-ghost" onclick="closeModal()">Keep Scanning</button>
+      <button class="btn btn-danger" onclick="confirmTerminateAndNew()">Terminate &amp; New Scan</button>
+    </div>
   </div>
 </div>
 
@@ -105,7 +106,10 @@
         <h2>Scan In Progress</h2>
         <div class="mono" style="font-size:0.8rem;color:var(--text-muted);" id="progress-case-id"></div>
       </div>
-      <button class="btn btn-danger btn-sm" onclick="cancelScan()">✕ Cancel</button>
+      <div style="display:flex;gap:0.5rem;">
+        <button class="btn btn-ghost btn-sm" onclick="requestNewScan()">+ New Scan</button>
+        <button class="btn btn-danger btn-sm" onclick="requestNewScan()">✕ Cancel</button>
+      </div>
     </div>
 
     <div style="margin-bottom:1rem;">
@@ -140,7 +144,7 @@
     <p id="complete-subtitle" style="color:var(--text-muted);margin:0.5rem 0 1.5rem;"></p>
     <div style="display:flex;gap:1rem;justify-content:center;">
       <a id="view-report-btn" href="#" class="btn btn-primary">View Full Report</a>
-      <button class="btn btn-secondary" onclick="startNewScan()">New Scan</button>
+      <button class="btn btn-secondary" onclick="startNewScan()">+ New Scan</button>
     </div>
   </div>
 </div>
@@ -184,6 +188,7 @@ const PHASE_ORDER = ['discovery','enumeration','vulnscan','credtest','exploitati
 
 let currentCaseId = null;
 let eventSource = null;
+let _pendingNewScan = false; // set when user confirmed terminate-and-new
 
 // Auto-detect subnet on load
 fetch('/api/detect-network')
@@ -264,6 +269,12 @@ function clearActiveScan() {
 }
 
 async function startScan() {
+  // If another scan is somehow still active, ask first
+  if (currentCaseId) {
+    openModal();
+    return;
+  }
+
   const subnet = document.getElementById('subnet').value.trim();
   const authorizedBy = document.getElementById('authorized_by').value.trim();
   const authNotes = document.getElementById('authorization_notes').value.trim();
@@ -327,6 +338,41 @@ function showScanProgress(caseId) {
   document.getElementById('scan-progress-wrap').style.display = 'block';
   document.getElementById('scan-complete-wrap').style.display = 'none';
   document.getElementById('progress-case-id').textContent = caseId;
+  document.getElementById('page-title').textContent = 'Scan In Progress';
+  document.getElementById('page-subtitle').textContent = caseId;
+}
+
+// ── Modal helpers ─────────────────────────────────────────────────────────────
+
+function openModal() {
+  const m = document.getElementById('confirm-modal');
+  m.style.display = 'flex';
+}
+
+function closeModal() {
+  document.getElementById('confirm-modal').style.display = 'none';
+  _pendingNewScan = false;
+}
+
+// Called when user clicks "+ New Scan" or "Cancel" while a scan is running
+function requestNewScan() {
+  if (currentCaseId) {
+    openModal();
+  } else {
+    startNewScan();
+  }
+}
+
+async function confirmTerminateAndNew() {
+  closeModal();
+  if (currentCaseId) {
+    // Tell the server to cancel
+    await fetch(`/api/scan/${encodeURIComponent(currentCaseId)}/cancel`, {method: 'POST'}).catch(() => {});
+    if (eventSource) { eventSource.close(); eventSource = null; }
+    localStorage.removeItem('apt_active_scan');
+    currentCaseId = null;
+  }
+  startNewScan();
 }
 
 function subscribeStream(caseId) {
@@ -349,6 +395,9 @@ function subscribeStream(caseId) {
       eventSource = null;
       if (data.status === 'complete') {
         onScanComplete(caseId);
+      } else if (data.status === 'cancelled') {
+        // User triggered — silently reset to new scan form
+        startNewScan();
       } else {
         onScanError(data.status);
       }
@@ -457,14 +506,10 @@ function onScanError(status) {
   document.getElementById('phase-label').textContent = 'Scan failed — see log above';
 }
 
-function cancelScan() {
-  if (eventSource) { eventSource.close(); eventSource = null; }
-  localStorage.removeItem('apt_active_scan');
-  currentCaseId = null;
-  startNewScan();
-}
-
 function startNewScan() {
+  if (eventSource) { eventSource.close(); eventSource = null; }
+  currentCaseId = null;
+  localStorage.removeItem('apt_active_scan');
   document.getElementById('scan-form-wrap').style.display = 'block';
   document.getElementById('scan-progress-wrap').style.display = 'none';
   document.getElementById('scan-complete-wrap').style.display = 'none';
@@ -472,6 +517,8 @@ function startNewScan() {
   document.getElementById('start-btn').textContent = 'Start Automated Penetration Test';
   document.getElementById('auth-confirm').checked = false;
   document.getElementById('scan-log').innerHTML = '';
+  document.getElementById('page-title').textContent = 'Scan';
+  document.getElementById('page-subtitle').textContent = 'Configure scope, confirm authorization, and start automated penetration test';
   PHASE_ORDER.forEach(p => {
     const chip = document.getElementById('chip-' + p);
     if (chip) chip.className = 'phase-chip';
