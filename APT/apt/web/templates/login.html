@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Login — APT</title>
+  <link rel="stylesheet" href="/static/css/main.css" />
+</head>
+<body class="dark-theme" style="display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;">
+  <div style="width:100%;max-width:380px;padding:1rem;">
+    <div style="text-align:center;margin-bottom:2rem;">
+      <svg viewBox="0 0 40 40" fill="none" style="width:48px;height:48px;margin:0 auto 0.75rem;">
+        <circle cx="20" cy="20" r="18" stroke="#4299e1" stroke-width="2"/>
+        <circle cx="20" cy="20" r="8" stroke="#4299e1" stroke-width="2"/>
+        <circle cx="20" cy="20" r="2" fill="#63b3ed"/>
+        <line x1="20" y1="2" x2="20" y2="10" stroke="#4299e1" stroke-width="2" stroke-linecap="round"/>
+        <line x1="20" y1="30" x2="20" y2="38" stroke="#4299e1" stroke-width="2" stroke-linecap="round"/>
+        <line x1="2" y1="20" x2="10" y2="20" stroke="#4299e1" stroke-width="2" stroke-linecap="round"/>
+        <line x1="30" y1="20" x2="38" y2="20" stroke="#4299e1" stroke-width="2" stroke-linecap="round"/>
+      </svg>
+      <div style="font-size:1.5rem;font-weight:700;color:var(--text-primary);">APT</div>
+      <div style="font-size:0.8rem;color:var(--text-muted);">Automated Penetration Toolkit</div>
+    </div>
+    <div class="card">
+      <div class="card-header"><h2>Access Required</h2></div>
+      {% if error %}
+      <div style="padding:8px 12px;margin-bottom:1rem;background:#2d1011;border:1px solid var(--accent-red);border-radius:6px;font-size:0.85rem;color:var(--accent-red);">
+        {{ error }}
+      </div>
+      {% endif %}
+      <form method="POST" action="/login">
+        <div class="form-group">
+          <label>Access Token</label>
+          <input type="password" name="token" class="form-control" placeholder="Enter access token" autofocus required
+                 style="font-family:monospace;letter-spacing:0.05em;">
+          <div style="font-size:0.75rem;color:var(--text-muted);margin-top:6px;">
+            Find your token: <code>sudo journalctl -u apt-gui | grep "ACCESS TOKEN"</code><br>
+            Or read: <code>sudo cat /opt/apt/settings.json</code>
+          </div>
+        </div>
+        <button type="submit" class="btn btn-primary" style="width:100%;padding:10px;">Sign In</button>
+      </form>
+    </div>
+  </div>
+</body>
+</html>

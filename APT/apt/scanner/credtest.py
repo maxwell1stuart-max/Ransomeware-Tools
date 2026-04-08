@@ -168,7 +168,7 @@ def _test_with_hydra(ip: str, service: str, port: int, creds: list,
                     password=password,
                     access_level=access,
                 ))
-                _log(f"  CREDENTIAL FOUND: {service}://{username}:{password}@{ip}:{port}", "success", log_callback)
+                _log(f"  CREDENTIAL FOUND: {service}://{username}:{'*' * len(password)}@{ip}:{port} [{access}]", "success", log_callback)
 
     except subprocess.TimeoutExpired:
         _log(f"  hydra timed out for {service}://{ip}:{port}", "warn", log_callback)
@@ -201,7 +201,7 @@ def _test_smb_direct(ip: str, port: int, creds: list,
                 username=username, password=password,
                 access_level=access,
             ))
-            _log(f"  SMB credential valid: {username}:{password} @ {ip}", "success", log_callback)
+            _log(f"  SMB credential valid: {username}:{'*' * len(password)} @ {ip}", "success", log_callback)
             break  # Stop after first valid pair
         except Exception:
             continue

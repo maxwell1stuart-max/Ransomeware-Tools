@@ -7,17 +7,19 @@ Also accessible from any browser on the local network.
 import asyncio
 import json
 import os
+import re
+import secrets
 import subprocess
 import threading
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 from typing import Optional
 
-from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
+from flask import Flask, Response, jsonify, make_response, redirect, render_template, request, send_file, stream_with_context, url_for
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
 
 # Output dir for reports and case index
 OUTPUT_DIR = Path(os.environ.get("RFT_OUTPUT", Path.home() / ".rft" / "output"))
@@ -143,22 +145,79 @@ def _rebuild_findings_from_disk(case_id: str) -> dict:
 # Load any previously saved cases on startup
 active_cases: dict[str, dict] = _load_cases()
 
-# Load persisted settings (API key, etc.) into environment on startup
-_SETTINGS_PATH = Path("/opt/rft/settings.json")
+_SETTINGS_PATH = Path(os.environ.get("RFT_SETTINGS", "/opt/rft/settings.json"))
+_RFT_COOKIE    = "rft_session"
+_VALID_CASE_ID = re.compile(r'^[A-Za-z0-9_-]{4,64}$')
+_VALID_FMT     = {"txt", "json", "pdf"}
+_cases_lock    = threading.Lock()
+
+
+def _rft_load_settings() -> dict:
+    if _SETTINGS_PATH.exists():
+        try:
+            return json.loads(_SETTINGS_PATH.read_text())
+        except Exception:
+            pass
+    return {}
+
+
+def _rft_save_settings(data: dict):
+    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_PATH.write_text(json.dumps(data, indent=2))
+    _SETTINGS_PATH.chmod(0o600)
+    _SETTINGS_PATH.parent.chmod(0o755)
+
+
+def _rft_get_token() -> str:
+    s = _rft_load_settings()
+    if s.get("api_key"):
+        os.environ["ANTHROPIC_API_KEY"] = s["api_key"]
+    if s.get("access_token"):
+        return s["access_token"]
+    token = secrets.token_hex(24)
+    s["access_token"] = token
+    _rft_save_settings(s)
+    import logging as _log
+    _log.getLogger(__name__).warning("=" * 60)
+    _log.getLogger(__name__).warning("RFT ACCESS TOKEN: %s", token)
+    _log.getLogger(__name__).warning("Saved to: %s", _SETTINGS_PATH)
+    _log.getLogger(__name__).warning("=" * 60)
+    return token
+
+
+def _rft_init_secret() -> str:
+    s = _rft_load_settings()
+    if s.get("flask_secret"):
+        return s["flask_secret"]
+    key = secrets.token_hex(32)
+    s["flask_secret"] = key
+    _rft_save_settings(s)
+    return key
+
+
+app.secret_key = _rft_init_secret()
+_RFT_TOKEN = _rft_get_token()
+
+
+def _require_auth(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        cookie = request.cookies.get(_RFT_COOKIE, "")
+        header = request.headers.get("X-RFT-Token", "")
+        if not secrets.compare_digest(cookie, _RFT_TOKEN) and \
+           not secrets.compare_digest(header, _RFT_TOKEN):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect(url_for("login_page"))
+        return f(*args, **kwargs)
+    return decorated
 
 
 def _load_settings():
-    """Apply saved settings to the environment (e.g. ANTHROPIC_API_KEY)."""
-    if _SETTINGS_PATH.exists():
-        try:
-            settings = json.loads(_SETTINGS_PATH.read_text())
-            if settings.get("api_key"):
-                os.environ["ANTHROPIC_API_KEY"] = settings["api_key"]
-        except Exception:
-            pass
-
-
-_load_settings()
+    """Legacy compat: apply saved API key to environment."""
+    s = _rft_load_settings()
+    if s.get("api_key"):
+        os.environ["ANTHROPIC_API_KEY"] = s["api_key"]
 
 
 # ─── Helper: run async in background thread ──────────────────────────────────
@@ -170,40 +229,71 @@ def run_async(coro):
     return t
 
 
+# ─── Routes: Login ────────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    error = None
+    if request.method == "POST":
+        token = (request.form.get("token") or "").strip()
+        if secrets.compare_digest(token, _RFT_TOKEN):
+            resp = make_response(redirect(url_for("index")))
+            resp.set_cookie(_RFT_COOKIE, token, httponly=True, samesite="Strict", max_age=86400 * 30)
+            return resp
+        error = "Invalid access token."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    resp = make_response(redirect(url_for("login_page")))
+    resp.delete_cookie(_RFT_COOKIE)
+    return resp
+
+
 # ─── Routes: Pages ────────────────────────────────────────────────────────────
 
 @app.route("/")
+@_require_auth
 def index():
     return render_template("index.html")
 
 
 @app.route("/analyze")
+@_require_auth
 def analyze_page():
     return render_template("analyze.html")
 
 
 @app.route("/cases")
+@_require_auth
 def cases_page():
     return render_template("cases.html")
 
 
 @app.route("/report/<case_id>")
+@_require_auth
 def report_page(case_id):
+    if not _VALID_CASE_ID.match(case_id):
+        return "Invalid case ID", 400
     case = active_cases.get(case_id, {})
     return render_template("report.html", case_id=case_id, case=case)
 
 
 @app.route("/knowledge")
+@_require_auth
 def knowledge_page():
     return render_template("knowledge.html")
 
 
 @app.route("/settings")
+@_require_auth
 def settings_page():
     return render_template("settings.html")
 
 
 @app.route("/network")
+@_require_auth
 def network_page():
     return render_template("network.html")
 
@@ -211,6 +301,7 @@ def network_page():
 # ─── API: Drive Discovery ──────────────────────────────────────────────────────
 
 @app.route("/api/drives")
+@_require_auth
 def list_drives():
     """Return list of attached drives and their partitions, excluding the OS drive."""
     try:
@@ -273,6 +364,7 @@ def list_drives():
 # ─── API: Start Analysis ───────────────────────────────────────────────────────
 
 @app.route("/api/analyze/start", methods=["POST"])
+@_require_auth
 def start_analysis():
     """Begin forensic analysis of a selected drive."""
     data = request.json or {}
@@ -633,7 +725,10 @@ async def _run_analysis(case_id: str, device: str, use_ai: bool, acquire_image: 
 # ─── API: Case Status (polling) ────────────────────────────────────────────────
 
 @app.route("/api/case/<case_id>/status")
+@_require_auth
 def case_status(case_id):
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
     case = active_cases.get(case_id)
     if not case:
         return jsonify({"error": "Case not found"}), 404
@@ -649,6 +744,7 @@ def case_status(case_id):
 # ─── API: Server-Sent Events for real-time log streaming ──────────────────────
 
 @app.route("/api/case/<case_id>/stream")
+@_require_auth
 def case_stream(case_id):
     """SSE endpoint — streams log entries to the browser in real time."""
     def generate():
@@ -679,7 +775,10 @@ def case_stream(case_id):
 # ─── API: Update victim info ───────────────────────────────────────────────────
 
 @app.route("/api/case/<case_id>/victim", methods=["POST"])
+@_require_auth
 def update_victim(case_id):
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
     case = active_cases.get(case_id)
     if not case:
         return jsonify({"error": "Case not found"}), 404
@@ -693,7 +792,12 @@ def update_victim(case_id):
 # ─── API: Download report ──────────────────────────────────────────────────────
 
 @app.route("/api/case/<case_id>/download/<fmt>")
+@_require_auth
 def download_report(case_id, fmt):
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
+    if fmt not in _VALID_FMT:
+        return jsonify({"error": "Invalid format"}), 400
     case = active_cases.get(case_id)
     if not case or not case.get("findings"):
         return jsonify({"error": "Report not ready"}), 404
@@ -704,22 +808,29 @@ def download_report(case_id, fmt):
         "json": findings.get("report_json"),
         "pdf": findings.get("report_pdf"),
     }
-    path = path_map.get(fmt)
-    if not path or not Path(path).exists():
+    raw_path = path_map.get(fmt)
+    if not raw_path:
         if fmt == "pdf":
             return jsonify({
                 "error": "PDF not available — install reportlab on the Pi: sudo pip3 install --break-system-packages reportlab",
                 "fallback": "txt"
             }), 404
         return jsonify({"error": f"Report format '{fmt}' not available"}), 404
-
-    filename = f"RFT_{case_id}_{fmt}.{fmt}"
-    return send_file(path, as_attachment=True, download_name=filename)
+    # Path traversal guard
+    expected_dir = (OUTPUT_DIR / case_id).resolve()
+    resolved = Path(raw_path).resolve()
+    if not str(resolved).startswith(str(expected_dir)):
+        return jsonify({"error": "Access denied"}), 403
+    if not resolved.exists():
+        return jsonify({"error": "Report file not found"}), 404
+    filename = f"RFT_{case_id}.{fmt}"
+    return send_file(str(resolved), as_attachment=True, download_name=filename)
 
 
 # ─── API: List all cases ───────────────────────────────────────────────────────
 
 @app.route("/api/cases")
+@_require_auth
 def list_cases():
     summary = []
     for cid, c in active_cases.items():
@@ -741,6 +852,7 @@ def list_cases():
 # ─── API: Knowledge base stats ────────────────────────────────────────────────
 
 @app.route("/api/knowledge")
+@_require_auth
 def knowledge_stats():
     try:
         from rft.knowledge_base.manager import KnowledgeBase
@@ -755,6 +867,7 @@ def knowledge_stats():
 # ─── API: Quick identify from ransom note text ────────────────────────────────
 
 @app.route("/api/identify", methods=["POST"])
+@_require_auth
 def quick_identify():
     data = request.json or {}
     text = data.get("text", "")
@@ -782,31 +895,25 @@ def quick_identify():
 # ─── API: System settings ─────────────────────────────────────────────────────
 
 @app.route("/api/settings", methods=["GET", "POST"])
+@_require_auth
 def settings():
-    # Use a fixed path so settings persist regardless of whether run as sudo or user
-    settings_path = Path("/opt/rft/settings.json")
     if request.method == "POST":
         data = request.json or {}
-        settings_path.parent.mkdir(parents=True, exist_ok=True)
-        os.chmod(str(settings_path.parent), 0o777) if settings_path.parent.exists() else None
-        existing = {}
-        if settings_path.exists():
-            existing = json.loads(settings_path.read_text())
-        existing.update(data)
-        settings_path.write_text(json.dumps(existing, indent=2))
-        # Apply API key to environment if provided
-        if "api_key" in data:
-            os.environ["ANTHROPIC_API_KEY"] = data["api_key"]
+        existing = _rft_load_settings()
+        for key in ("api_key", "examiner_name"):
+            if key in data:
+                existing[key] = str(data[key])
+        _rft_save_settings(existing)
+        if existing.get("api_key"):
+            os.environ["ANTHROPIC_API_KEY"] = existing["api_key"]
         return jsonify({"ok": True})
     else:
-        existing = {}
-        if settings_path.exists():
-            existing = json.loads(settings_path.read_text())
-        # Mask API key
+        existing = _rft_load_settings()
+        safe = {k: v for k, v in existing.items()
+                if k not in ("api_key", "access_token", "flask_secret")}
         if "api_key" in existing:
-            existing["api_key_set"] = True
-            del existing["api_key"]
-        return jsonify(existing)
+            safe["api_key_set"] = True
+        return jsonify(safe)
 
 
 # ─── API: Network Acquisition ─────────────────────────────────────────────────
@@ -816,6 +923,7 @@ _acq_jobs: dict[str, dict] = {}
 
 
 @app.route("/api/network/scan")
+@_require_auth
 def network_scan():
     """Scan local network for Windows hosts."""
     fast = request.args.get("fast", "true").lower() == "true"
@@ -844,6 +952,7 @@ def network_scan():
 
 
 @app.route("/api/network/acquire-ram", methods=["POST"])
+@_require_auth
 def network_acquire_ram():
     """Start a remote RAM acquisition job."""
     data = request.json or {}
@@ -890,6 +999,7 @@ def network_acquire_ram():
 
 
 @app.route("/api/network/acquire-status/<job_id>")
+@_require_auth
 def network_acquire_status(job_id):
     """SSE stream of acquisition progress."""
     import time as _time
@@ -925,6 +1035,7 @@ def network_acquire_status(job_id):
 
 
 @app.route("/api/network/acquire-download/<job_id>")
+@_require_auth
 def network_acquire_download(job_id):
     """Download the RAM dump file."""
     job = _acq_jobs.get(job_id)

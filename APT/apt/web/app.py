@@ -5,39 +5,106 @@ Runs on port 5001 (RFT runs on 5000).
 """
 
 import asyncio
+import ipaddress
 import json
 import logging
 import os
+import re
+import secrets
 import threading
 import uuid
 from datetime import datetime
+from functools import wraps
 from pathlib import Path
 
-from flask import Flask, Response, jsonify, render_template, request, send_file, stream_with_context
+from flask import Flask, Response, jsonify, make_response, redirect, render_template, request, send_file, stream_with_context, url_for
 
 app = Flask(__name__)
-app.secret_key = os.urandom(24)
 logger = logging.getLogger(__name__)
 
 OUTPUT_DIR = Path(os.environ.get("APT_OUTPUT", Path.home() / ".apt" / "output"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 CASES_INDEX = OUTPUT_DIR / "cases_index.json"
-_SETTINGS_PATH = Path("/opt/apt/settings.json")
+_SETTINGS_PATH = Path(os.environ.get("APT_SETTINGS", "/opt/apt/settings.json"))
+_COOKIE_NAME = "apt_session"
+_VALID_CASE_ID = re.compile(r'^APT-\d{8}-\d{6}$')
+_VALID_FMT     = {"txt", "json", "pdf"}
 
 _IN_PROGRESS = {"discovery", "enumeration", "vulnscan", "webscan", "credtest", "exploitation", "reporting"}
 
+# Thread lock for active_cases dict (modified by Flask threads + background workers)
+_cases_lock = threading.Lock()
 
-# ── Persistence ───────────────────────────────────────────────────────────────
 
-def _load_settings():
+# ── Settings & auth ───────────────────────────────────────────────────────────
+
+def _load_settings() -> dict:
     if _SETTINGS_PATH.exists():
         try:
-            s = json.loads(_SETTINGS_PATH.read_text())
-            if s.get("api_key"):
-                os.environ["ANTHROPIC_API_KEY"] = s["api_key"]
+            return json.loads(_SETTINGS_PATH.read_text())
         except Exception:
             pass
+    return {}
+
+
+def _save_settings(data: dict):
+    _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    _SETTINGS_PATH.write_text(json.dumps(data, indent=2))
+    _SETTINGS_PATH.chmod(0o600)
+    _SETTINGS_PATH.parent.chmod(0o755)
+
+
+def _get_access_token() -> str:
+    """Return the access token, generating and persisting one on first run."""
+    s = _load_settings()
+    if s.get("api_key"):
+        os.environ["ANTHROPIC_API_KEY"] = s["api_key"]
+    if s.get("access_token"):
+        return s["access_token"]
+    # First run — generate and persist
+    token = secrets.token_hex(24)
+    s["access_token"] = token
+    _save_settings(s)
+    logger.warning("=" * 60)
+    logger.warning("APT ACCESS TOKEN (required to log in):")
+    logger.warning(f"  {token}")
+    logger.warning(f"  Token also saved to: {_SETTINGS_PATH}")
+    logger.warning("=" * 60)
+    return token
+
+
+def _init_secret_key() -> str:
+    """Load or generate a persistent Flask secret key."""
+    s = _load_settings()
+    if s.get("flask_secret"):
+        return s["flask_secret"]
+    key = secrets.token_hex(32)
+    s["flask_secret"] = key
+    _save_settings(s)
+    return key
+
+
+app.secret_key = _init_secret_key()
+_ACCESS_TOKEN = _get_access_token()
+
+
+def _require_auth(f):
+    """Decorator: require valid session cookie or X-APT-Token header."""
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token_cookie = request.cookies.get(_COOKIE_NAME, "")
+        token_header = request.headers.get("X-APT-Token", "")
+        if not secrets.compare_digest(token_cookie, _ACCESS_TOKEN) and \
+           not secrets.compare_digest(token_header, _ACCESS_TOKEN):
+            if request.path.startswith("/api/"):
+                return jsonify({"error": "Unauthorized"}), 401
+            return redirect(url_for("login_page"))
+        return f(*args, **kwargs)
+    return decorated
+
+
+# ── Persistence ───────────────────────────────────────────────────────────────
 
 
 def _load_cases() -> dict:
@@ -65,25 +132,26 @@ def _load_cases() -> dict:
 
 
 def _save_cases():
-    slim = {}
-    for cid, c in active_cases.items():
-        entry = {}
-        for k, v in c.items():
-            if k == "log":
-                continue
-            try:
-                json.dumps(v, default=str)
-                entry[k] = v
-            except Exception:
-                entry[k] = str(v)
-        slim[cid] = entry
+    with _cases_lock:
+        slim = {}
+        for cid, c in active_cases.items():
+            entry = {}
+            for k, v in c.items():
+                if k in ("log",):
+                    continue
+                try:
+                    json.dumps(v, default=str)
+                    entry[k] = v
+                except Exception:
+                    entry[k] = str(v)
+            slim[cid] = entry
     try:
         CASES_INDEX.write_text(json.dumps(slim, indent=2, default=str))
+        CASES_INDEX.chmod(0o600)
     except Exception as e:
         logger.warning(f"Failed to save cases index: {e}")
 
 
-_load_settings()
 active_cases: dict = _load_cases()
 
 
@@ -96,30 +164,58 @@ def run_async(coro):
     return t
 
 
+# ── Routes: Login ─────────────────────────────────────────────────────────────
+
+@app.route("/login", methods=["GET", "POST"])
+def login_page():
+    error = None
+    if request.method == "POST":
+        token = (request.form.get("token") or "").strip()
+        if secrets.compare_digest(token, _ACCESS_TOKEN):
+            resp = make_response(redirect(url_for("index")))
+            resp.set_cookie(_COOKIE_NAME, token, httponly=True, samesite="Strict", max_age=86400 * 30)
+            return resp
+        error = "Invalid access token."
+    return render_template("login.html", error=error)
+
+
+@app.route("/logout")
+def logout():
+    resp = make_response(redirect(url_for("login_page")))
+    resp.delete_cookie(_COOKIE_NAME)
+    return resp
+
+
 # ── Routes: Pages ─────────────────────────────────────────────────────────────
 
 @app.route("/")
+@_require_auth
 def index():
     return render_template("index.html")
 
 
 @app.route("/scan")
+@_require_auth
 def scan_page():
     return render_template("scan.html")
 
 
 @app.route("/cases")
+@_require_auth
 def cases_page():
     return render_template("cases.html")
 
 
 @app.route("/report/<case_id>")
+@_require_auth
 def report_page(case_id):
-    case = active_cases.get(case_id, {})
+    if not _VALID_CASE_ID.match(case_id):
+        return "Invalid case ID", 400
     return render_template("report.html", case_id=case_id)
 
 
 @app.route("/settings")
+@_require_auth
 def settings_page():
     return render_template("settings.html")
 
@@ -127,6 +223,7 @@ def settings_page():
 # ── API: Tool status ──────────────────────────────────────────────────────────
 
 @app.route("/api/tool-status")
+@_require_auth
 def tool_status():
     import shutil
     import os as _os
@@ -158,6 +255,7 @@ def tool_status():
 # ── API: Network detection ────────────────────────────────────────────────────
 
 @app.route("/api/detect-network")
+@_require_auth
 def detect_network():
     try:
         from apt.scanner.discovery import get_local_ip, ip_to_subnet
@@ -171,18 +269,26 @@ def detect_network():
 # ── API: Start scan ───────────────────────────────────────────────────────────
 
 @app.route("/api/scan/start", methods=["POST"])
+@_require_auth
 def start_scan():
     data = request.json or {}
     subnet = data.get("subnet", "").strip()
     authorized_by = data.get("authorized_by", "").strip()
     authorization_notes = data.get("authorization_notes", "").strip()
-    aggression = data.get("aggression", "normal")   # passive / normal / aggressive
-    skip_ping = data.get("skip_ping", False)
-    enable_creds = data.get("enable_creds", True)
-    enable_exploit = data.get("enable_exploit", False)
+    aggression = data.get("aggression", "normal")
+    skip_ping = bool(data.get("skip_ping", False))
+    enable_creds = bool(data.get("enable_creds", True))
+    enable_exploit = bool(data.get("enable_exploit", False))
 
     if not subnet:
         return jsonify({"error": "No subnet specified"}), 400
+    # Validate subnet is proper CIDR notation
+    try:
+        ipaddress.ip_network(subnet, strict=False)
+    except ValueError:
+        return jsonify({"error": f"Invalid subnet CIDR: {subnet!r}"}), 400
+    if aggression not in ("passive", "normal", "aggressive"):
+        return jsonify({"error": "Invalid aggression level"}), 400
     if not authorized_by:
         return jsonify({"error": "Authorization name required"}), 400
 
@@ -341,42 +447,44 @@ async def _run_scan(case_id, subnet, authorized_by, authorization_notes,
         log(f"Report saved — Risk: {report.risk_rating} ({report.risk_score}/100)", "success")
 
         # Build findings for UI
-        case["findings"] = {
-            "risk_score": report.risk_score,
-            "risk_rating": report.risk_rating,
-            "hosts_discovered": report.hosts_discovered,
-            "hosts_vulnerable": report.hosts_vulnerable,
-            "critical_vulns": report.critical_vulns,
-            "high_vulns": report.high_vulns,
-            "medium_vulns": report.medium_vulns,
-            "low_vulns": report.low_vulns,
-            "credentials_found": report.credentials_found,
-            "systems_compromised": report.systems_compromised,
-            "hosts": report.hosts,
-            "vulnerabilities": report.vulnerabilities,
-            "credential_findings": [
-                {k: v if k != "password" else "*" * len(v) for k, v in f.items()}
-                for f in report.credential_findings
-            ],
-            "credential_findings_raw": report.credential_findings,
-            "exploit_results": report.exploit_results,
-            "critical_recommendations": report.critical_recommendations,
-            "general_recommendations": report.general_recommendations,
-            "phases_completed": report.phases_completed,
-            "report_txt": str(case_out / "apt_report.txt"),
-            "report_json": str(case_out / "apt_report.json"),
-            "report_pdf": pdf_path,
-            "subnet": subnet,
-            "authorized_by": authorized_by,
-        }
+        with _cases_lock:
+            case["findings"] = {
+                "risk_score": report.risk_score,
+                "risk_rating": report.risk_rating,
+                "hosts_discovered": report.hosts_discovered,
+                "hosts_vulnerable": report.hosts_vulnerable,
+                "critical_vulns": report.critical_vulns,
+                "high_vulns": report.high_vulns,
+                "medium_vulns": report.medium_vulns,
+                "low_vulns": report.low_vulns,
+                "credentials_found": report.credentials_found,
+                "systems_compromised": report.systems_compromised,
+                "hosts": report.hosts,
+                "vulnerabilities": report.vulnerabilities,
+                # Passwords masked — raw credentials never leave the server
+                "credential_findings": [
+                    {k: ("*" * len(str(v))) if k == "password" else v
+                     for k, v in f.items()}
+                    for f in report.credential_findings
+                ],
+                "exploit_results": report.exploit_results,
+                "critical_recommendations": report.critical_recommendations,
+                "general_recommendations": report.general_recommendations,
+                "phases_completed": report.phases_completed,
+                "report_txt": str(case_out / "apt_report.txt"),
+                "report_json": str(case_out / "apt_report.json"),
+                "report_pdf": pdf_path,
+                "subnet": subnet,
+                "authorized_by": authorized_by,
+            }
 
-        # Save findings to disk
+        # Save findings to disk (owner read/write only — contains sensitive data)
         try:
-            (case_out / "findings.json").write_text(
-                json.dumps(case["findings"], indent=2, default=str)
-            )
-        except Exception:
-            pass
+            fp = case_out / "findings.json"
+            fp.write_text(json.dumps(case["findings"], indent=2, default=str))
+            fp.chmod(0o600)
+        except Exception as e:
+            logger.warning(f"Could not save findings cache: {e}")
 
         case["status"] = "complete"
         case["progress"] = 100
@@ -422,21 +530,32 @@ def _finalize(case, case_id, discovery_result, enum_results, vuln_results,
 # ── API: Status & streaming ───────────────────────────────────────────────────
 
 @app.route("/api/scan/<case_id>/status")
+@_require_auth
 def scan_status(case_id):
-    case = active_cases.get(case_id)
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
+    with _cases_lock:
+        case = active_cases.get(case_id)
     if not case:
         return jsonify({"error": "Case not found"}), 404
+    # Never return raw credentials in findings — mask passwords
+    findings = case.get("findings")
+    if findings and findings.get("credential_findings_raw"):
+        findings = {k: v for k, v in findings.items() if k != "credential_findings_raw"}
     return jsonify({
         "status": case["status"],
         "progress": case.get("progress", 0),
         "log": case["log"][-50:],
         "error": case.get("error"),
-        "findings": case.get("findings"),
+        "findings": findings,
     })
 
 
 @app.route("/api/scan/<case_id>/stream")
+@_require_auth
 def scan_stream(case_id):
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
     import time as _time
 
     def _gen():
@@ -470,6 +589,7 @@ def scan_stream(case_id):
 # ── API: Cases ────────────────────────────────────────────────────────────────
 
 @app.route("/api/cases")
+@_require_auth
 def list_cases():
     summary = []
     for cid, c in active_cases.items():
@@ -492,8 +612,14 @@ def list_cases():
 
 
 @app.route("/api/case/<case_id>/download/<fmt>")
+@_require_auth
 def download_report(case_id, fmt):
-    case = active_cases.get(case_id)
+    if not _VALID_CASE_ID.match(case_id):
+        return jsonify({"error": "Invalid case ID"}), 400
+    if fmt not in _VALID_FMT:
+        return jsonify({"error": "Invalid format"}), 400
+    with _cases_lock:
+        case = active_cases.get(case_id)
     if not case or not case.get("findings"):
         return jsonify({"error": "Report not ready"}), 404
     f = case["findings"]
@@ -502,41 +628,44 @@ def download_report(case_id, fmt):
         "json": f.get("report_json"),
         "pdf": f.get("report_pdf"),
     }
-    path = path_map.get(fmt)
-    if not path or not Path(path).exists():
+    raw_path = path_map.get(fmt)
+    if not raw_path:
         if fmt == "pdf":
             return jsonify({"error": "PDF not available — install reportlab: sudo pip3 install reportlab"}), 404
         return jsonify({"error": f"Format '{fmt}' not available"}), 404
-    return send_file(path, as_attachment=True, download_name=f"APT_{case_id}.{fmt}")
+    # Path traversal guard: ensure file is within the expected case output dir
+    expected_dir = (OUTPUT_DIR / case_id).resolve()
+    resolved = Path(raw_path).resolve()
+    if not str(resolved).startswith(str(expected_dir)):
+        return jsonify({"error": "Access denied"}), 403
+    if not resolved.exists():
+        return jsonify({"error": f"Report file not found"}), 404
+    return send_file(str(resolved), as_attachment=True, download_name=f"APT_{case_id}.{fmt}")
 
 
 # ── API: Settings ─────────────────────────────────────────────────────────────
 
 @app.route("/api/settings", methods=["GET", "POST"])
+@_require_auth
 def settings():
     if request.method == "POST":
         data = request.json or {}
-        _SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
-        existing = {}
-        if _SETTINGS_PATH.exists():
-            try:
-                existing = json.loads(_SETTINGS_PATH.read_text())
-            except Exception:
-                pass
-        existing.update(data)
-        _SETTINGS_PATH.write_text(json.dumps(existing, indent=2))
+        existing = _load_settings()
+        # Only allow updating these specific keys
+        for key in ("api_key", "examiner_name"):
+            if key in data:
+                existing[key] = str(data[key])
+        _save_settings(existing)
+        if existing.get("api_key"):
+            os.environ["ANTHROPIC_API_KEY"] = existing["api_key"]
         return jsonify({"ok": True})
     else:
-        existing = {}
-        if _SETTINGS_PATH.exists():
-            try:
-                existing = json.loads(_SETTINGS_PATH.read_text())
-            except Exception:
-                pass
+        existing = _load_settings()
+        safe = {k: v for k, v in existing.items()
+                if k not in ("api_key", "access_token", "flask_secret")}
         if "api_key" in existing:
-            existing["api_key_set"] = True
-            del existing["api_key"]
-        return jsonify(existing)
+            safe["api_key_set"] = True
+        return jsonify(safe)
 
 
 def create_app():
