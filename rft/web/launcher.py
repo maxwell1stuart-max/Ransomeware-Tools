@@ -49,6 +49,14 @@ def open_browser(url: str, kiosk: bool = False):
     """Open the GUI in a browser window."""
     time.sleep(2)  # Give Flask time to start
 
+    # RFT requires root for disk operations, so it always runs as root.
+    # Root cannot connect to the desktop X session — attempting to launch
+    # Chromium as root causes X auth failures, GPU errors, and input focus
+    # issues on the desktop. Skip browser launch entirely; the user accesses
+    # RFT from another device on the network using the URL printed above.
+    if os.geteuid() == 0:
+        return
+
     # Skip if no display is available (headless server, SSH session)
     if not os.environ.get("DISPLAY") and not kiosk:
         return
@@ -60,23 +68,21 @@ def open_browser(url: str, kiosk: bool = False):
         # Try Chromium kiosk mode (standard on Raspberry Pi OS)
         for browser in ("chromium-browser", "chromium", "google-chrome"):
             try:
-                subprocess.Popen([
-                    browser,
-                    "--kiosk",
-                    "--no-sandbox",
-                    "--disable-infobars",
-                    "--disable-session-crashed-bubble",
-                    "--disable-restore-session-state",
-                    "--autoplay-policy=no-user-gesture-required",
-                    url
-                ])
+                subprocess.Popen(
+                    [browser, "--kiosk", "--no-sandbox", "--disable-infobars",
+                     "--disable-session-crashed-bubble",
+                     "--disable-restore-session-state",
+                     "--autoplay-policy=no-user-gesture-required", url],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                )
                 return
             except FileNotFoundError:
                 continue
 
         # Fallback: Firefox fullscreen
         try:
-            subprocess.Popen(["firefox", "--kiosk", url])
+            subprocess.Popen(["firefox", "--kiosk", url],
+                             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             return
         except FileNotFoundError:
             pass
@@ -95,10 +101,9 @@ def print_banner(local_ip: str):
         "  ║   Ransomware Forensics Toolkit  v1.0         ║",
         "  ╚══════════════════════════════════════════════╝",
         "",
-        f"  Local:    http://127.0.0.1:{PORT}",
-        f"  Network:  http://{local_ip}:{PORT}",
+        f"  Open in your browser:  http://{local_ip}:{PORT}",
         "",
-        "  Opening browser... (Ctrl+C to stop)",
+        "  Ctrl+C to stop",
         "",
     ]
     for line in lines:
