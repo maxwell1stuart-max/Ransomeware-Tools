@@ -190,36 +190,92 @@ def mount_drive_readonly(
             fstype = _detect_filesystem(mount_device)
             logger.info(f"{device} has no direct filesystem — trying first partition {mount_device}")
 
-    # Build mount options — include show_sys_files for NTFS
-    base_opts = "ro,noatime,noexec,nosuid"
-    if fstype in ("ntfs", "ntfs-3g"):
-        base_opts += ",windows_names"
-        fstype = "ntfs-3g"
-
-    # Try mount with detected fstype first, then auto-detect
-    errors = []
-    mounted_ok = False
-    for cmd in [
-        ["mount", "-t", fstype, "-o", base_opts, mount_device, str(mount_point)] if fstype else None,
-        ["mount", "-o", base_opts, mount_device, str(mount_point)],
-    ]:
-        if cmd is None:
-            continue
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode == 0:
-            mounted_ok = True
-            break
-        errors.append(result.stderr.strip())
-
-    if not mounted_ok:
-        err_detail = " | ".join(errors)
-        logger.error(f"Mount failed for {mount_device}: {err_detail}")
+    # ── BitLocker check ───────────────────────────────────────────────────────
+    if fstype and "bitlocker" in fstype.lower() or _is_bitlocker(mount_device):
         _set_write_protection(device, protect=False)
         try:
             mount_point.rmdir()
         except Exception:
             pass
-        raise RuntimeError(f"Could not mount {mount_device}: {err_detail}")
+        has_dislocker = bool(subprocess.run(["which", "dislocker"], capture_output=True).returncode == 0)
+        if has_dislocker:
+            raise RuntimeError(
+                f"{mount_device} is BitLocker encrypted. To unlock:\n"
+                f"  1. Get the BitLocker recovery key (from Microsoft account or AD)\n"
+                f"  2. sudo dislocker {mount_device} -p<recovery-key> -- /mnt/bitlocker\n"
+                f"  3. Then mount: sudo mount -o ro /mnt/bitlocker/dislocker-file /mnt/forensics/unlocked"
+            )
+        else:
+            raise RuntimeError(
+                f"{mount_device} is BitLocker encrypted.\n"
+                f"Install dislocker to decrypt: sudo apt-get install dislocker\n"
+                f"Then provide the BitLocker recovery key (from victim's Microsoft account or Active Directory)."
+            )
+
+    # ── NTFS hibernation check ────────────────────────────────────────────────
+    if fstype in ("ntfs", "ntfs-3g") and _is_ntfs_hibernated(mount_device):
+        # Do NOT use remove_hiberfile — it writes to the drive, violating forensic integrity.
+        # Instead try the kernel ntfs3 driver which is more permissive with dirty volumes.
+        logger.warning(f"{mount_device}: NTFS volume is hibernated (Windows Fast Startup). "
+                       f"Attempting read-only mount via kernel ntfs3 driver.")
+
+    # Build mount options — include show_sys_files for NTFS
+    base_opts = "ro,noatime,noexec,nosuid"
+
+    # Try mount with detected fstype first, then fallbacks
+    errors = []
+    mounted_ok = False
+    mount_attempts = []
+
+    if fstype in ("ntfs", "ntfs-3g"):
+        # Try kernel ntfs3 driver first (handles dirty volumes better than ntfs-3g userspace)
+        mount_attempts.append(["mount", "-t", "ntfs3", "-o", base_opts, mount_device, str(mount_point)])
+        # Then ntfs-3g userspace
+        mount_attempts.append(["mount", "-t", "ntfs-3g", "-o", base_opts + ",windows_names", mount_device, str(mount_point)])
+        # ntfs-3g with ignore_case as last resort
+        mount_attempts.append(["mount", "-t", "ntfs-3g", "-o", base_opts + ",windows_names,ignore_case", mount_device, str(mount_point)])
+    elif fstype:
+        mount_attempts.append(["mount", "-t", fstype, "-o", base_opts, mount_device, str(mount_point)])
+
+    # Always include a no-fstype fallback
+    mount_attempts.append(["mount", "-o", base_opts, mount_device, str(mount_point)])
+
+    for cmd in mount_attempts:
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode == 0:
+            mounted_ok = True
+            # Use whichever fstype actually worked
+            if "-t" in cmd:
+                fstype = cmd[cmd.index("-t") + 1]
+            break
+        errors.append(result.stderr.strip())
+
+    if not mounted_ok:
+        err_detail = " | ".join(e for e in errors if e)
+        _set_write_protection(device, protect=False)
+        try:
+            mount_point.rmdir()
+        except Exception:
+            pass
+
+        # Produce a helpful error message based on what we know
+        if fstype in ("ntfs", "ntfs-3g"):
+            raise RuntimeError(
+                f"Could not mount {mount_device} (NTFS).\n\n"
+                f"Most likely cause: Windows used Fast Startup / hibernation and left "
+                f"the volume in a dirty state. Linux cannot safely mount it without risking corruption.\n\n"
+                f"Options:\n"
+                f"  1. Boot Windows on the original machine, disable Fast Startup "
+                f"(Control Panel → Power Options → Choose what the power buttons do → "
+                f"Turn on fast startup → UNCHECK), then shut down fully.\n"
+                f"  2. Or create a forensic image first and work from that:\n"
+                f"     sudo dd if={mount_device} of=/path/to/case.img bs=4M status=progress\n"
+                f"     sudo ntfs-3g -o ro,remove_hiberfile /path/to/case.img /mnt/forensics/unlocked\n"
+                f"     (remove_hiberfile on the IMAGE is safe — the original drive is untouched)\n\n"
+                f"Raw error: {err_detail}"
+            )
+        else:
+            raise RuntimeError(f"Could not mount {mount_device}: {err_detail}")
 
     # Hash the device for chain of custody
     if skip_hash:
@@ -306,6 +362,51 @@ def _detect_filesystem(device: str) -> Optional[str]:
     if result.returncode == 0 and result.stdout.strip():
         return result.stdout.strip()
     return None
+
+
+def _is_bitlocker(device: str) -> bool:
+    """Return True if the partition is BitLocker encrypted."""
+    result = subprocess.run(
+        ["blkid", "-o", "value", "-s", "TYPE", device],
+        capture_output=True, text=True
+    )
+    fs = result.stdout.strip().lower()
+    if "bitlocker" in fs:
+        return True
+    # blkid sometimes just returns nothing for BitLocker — check with file
+    result2 = subprocess.run(
+        ["file", "-s", device],
+        capture_output=True, text=True
+    )
+    return "BitLocker" in result2.stdout
+
+
+def _is_ntfs_hibernated(device: str) -> bool:
+    """
+    Return True if the NTFS volume has the hibernation/dirty flag set.
+    Windows Fast Startup leaves volumes in this state — they appear dirty
+    to Linux and cannot be safely mounted without risking data corruption.
+    """
+    try:
+        result = subprocess.run(
+            ["ntfsfix", "--no-action", device],
+            capture_output=True, text=True
+        )
+        output = result.stdout + result.stderr
+        return any(kw in output for kw in (
+            "Hibernate", "hiberfil", "Volume is scheduled",
+            "Windows is hibernated", "Dirty flag is set",
+        ))
+    except FileNotFoundError:
+        # ntfsfix not installed — try parsing boot sector directly
+        try:
+            with open(device, "rb") as f:
+                f.seek(0x1c)   # NTFS VCN of first cluster
+                f.seek(0x28)   # Flags offset in NTFS BPB not standard
+            # Fall back: just try mounting and see
+            return False
+        except Exception:
+            return False
 
 
 def _hash_device(device: str, chunk_size: int = 1024 * 1024, progress_callback=None) -> str:
