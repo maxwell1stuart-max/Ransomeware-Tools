@@ -137,8 +137,9 @@ def _test_with_hydra(ip: str, service: str, port: int, creds: list,
             "hydra",
             "-L", user_file,
             "-P", pass_file,
-            "-t", "4",          # 4 parallel tasks
-            "-w", "3",          # 3 second wait
+            "-t", "2",          # 2 parallel tasks (was 4) — gentler on target services
+            "-w", "5",          # 5 second response wait (was 3)
+            "-c", "2",          # 2 second delay between connection attempts per task
             "-f",               # stop after first valid pair found
             "-q",               # quiet
             f"{ip}",

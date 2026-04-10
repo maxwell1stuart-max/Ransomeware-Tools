@@ -323,7 +323,10 @@ def enumerate_hosts(
         import os as _os
         is_root = _os.getuid() == 0
 
-        cmd = ["nmap", "-sV", "-sC", "--version-intensity", "5", "-T4"]
+        # T2 (polite) timing + rate cap keeps traffic low enough to avoid stressing
+        # switches or triggering IDS on sensitive networks.
+        # version-intensity 3 is sufficient for common services (5 sends more probes).
+        cmd = ["nmap", "-sV", "-sC", "--version-intensity", "3", "-T2", "--max-rate", "50"]
 
         if is_root:
             # SYN scan (faster) + OS detection — both require root

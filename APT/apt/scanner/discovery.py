@@ -202,7 +202,8 @@ def _ping_sweep_fallback(subnet: str, log_callback: Optional[Callable] = None) -
         return None
 
     host_list = [str(h) for h in network.hosts()]
-    with concurrent.futures.ThreadPoolExecutor(max_workers=50) as executor:
+    # max_workers=10 keeps ARP/ICMP load low enough to avoid overwhelming switches
+    with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
         futures = {executor.submit(ping_host, ip): ip for ip in host_list}
         for future in concurrent.futures.as_completed(futures):
             result = future.result()
@@ -256,15 +257,26 @@ def discover_hosts(
     # Note: -O (OS detection) requires a port scan, so it cannot be combined with -sn here
     cmd = ["nmap", "-sn"]
 
+    # Use T2 (polite) timing regardless of fast flag — T4 sends ARP/SYN packets too
+    # rapidly and can overwhelm the state tables of consumer/unmanaged switches,
+    # causing them to reboot or drop connections during a /24 sweep.
     if fast:
-        cmd += ["-T4"]
+        cmd += ["-T2"]
+    else:
+        cmd += ["-T1"]
+
+    # Cap packet rate to avoid flooding switch ARP/CAM tables.
+    # 50 pps is enough to sweep a /24 comfortably without stressing hardware.
+    cmd += ["--max-rate", "50"]
 
     if skip_ping:
         # -Pn skips ping, treats all hosts as up — used when ICMP is blocked
         cmd += ["-Pn"]
         _log("Skip ping enabled — treating all hosts as up (slower)", "warn", log_callback)
     else:
-        cmd += ["-PE", "-PP", "-PS21,22,23,25,80,443,3389,8080"]  # Better host detection
+        # -PE: ICMP echo only — dropped -PP (timestamp) to reduce probe volume
+        # -PS on just 4 common ports instead of 8 to further reduce traffic
+        cmd += ["-PE", "-PS22,80,443,445"]
 
     cmd += ["-oX", "-", subnet]
 
