@@ -188,6 +188,17 @@ def logout():
 
 # ── Routes: Pages ─────────────────────────────────────────────────────────────
 
+@app.route("/sw.js")
+def service_worker():
+    """Serve service worker from root so it has full-scope cache control."""
+    from flask import send_from_directory
+    return send_from_directory(
+        os.path.join(os.path.dirname(__file__), "static"),
+        "sw.js",
+        mimetype="application/javascript",
+    )
+
+
 @app.route("/")
 @_require_auth
 def index():
